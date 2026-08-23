@@ -1,50 +1,46 @@
-import os
-import json
-import base64
-import requests
-import pandas as pd
+import os, json, base64, requests, pandas as pd
 from datetime import datetime, timedelta, timezone
 from requests.auth import HTTPBasicAuth
 
-# ---------- CONFIG ----------
-# Use QA endpoint (dash in path), per the FEMS guide.
-ENDPOINT = "https://fems-qa.fs2c.usda.gov/api/ext-climatology/graphql"  # QA
+# ---- Config ----
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
-USERNAME = os.environ["FEMS_USERNAME"]          # e.g., abie.carabajal@usda.gov
-API_KEY  = os.environ["FEMS_API_KEY"]           # the FEMS API key
-
-# Build canonical Basic auth with requests' HTTPBasicAuth
-AUTH = HTTPBasicAuth(USERNAME, API_KEY)
+USERNAME = os.environ["FEMS_USERNAME"]  # e.g., abie.carabajal@usda.gov
+API_KEY  = os.environ["FEMS_API_KEY"]   # your FEMS API key
+AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
 
 HEADERS = {
     "Content-Type": "application/json",
-    "Accept": "application/json"
+    "Accept": "application/json",
+    "User-Agent": "FEMS-NM-AZ-GitHubActions/1.0"
 }
 
-# ---------- STATIONS ----------
+# Endpoints from your FEMS guide:
+ENDPOINT_QA   = "https://fems-qa.fs2c.usda.gov/api/ext-climatology/graphql"   # QA (dash) 【1-ce091f】
+ENDPOINT_PROD = "https://fems.fs2c.usda.gov/api/extclimatology/graphql"        # Prod (no dash) 【1-ce091f】
+
+# ---- Load station IDs ----
 stations_path = os.path.join(DATA_DIR, "stations.csv")
 station_ids   = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
 station_ids_csv = ",".join(station_ids)
 
-# ---------- TIME (UTC) ----------
+# ---- Time windows (UTC) ----
 now_utc         = datetime.utcnow().replace(tzinfo=timezone.utc)
 last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
 last_hour_end   = (last_hour_start + timedelta(hours=1)) - timedelta(seconds=1)
-start_dt_iso = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-end_dt_iso   = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-today_str    = now_utc.strftime("%Y-%m-%d")
+start_dt_iso    = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+end_dt_iso      = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+today_str       = now_utc.strftime("%Y-%m-%d")
 
-# ---------- QUERIES (from the guide) ----------
-Q_SMOKE_TEST = """
+# ---- Queries from the guide ----
+Q_SMOKE = """
 query StationMetaData {
   stationMetaData(returnAll: true, hasHistoricData: ALL) {
     _metadata { total_count }
   }
 }
 """
-
 Q_WEATHER_OBS = """
 query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $stationIds: String) {
   weatherObs(startDateTimeRange: $startDateTimeRange, endDateTimeRange: $endDateTimeRange, stationIds: $stationIds, hasHistoricData: ALL) {
@@ -58,7 +54,6 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
   }
 }
 """
-
 Q_NFDRS_OBS = """
 query NfdrsObs(
   $fuelModels: String!, $stationIds: String,
@@ -82,7 +77,6 @@ query NfdrsObs(
   }
 }
 """
-
 Q_WX_MINMAX = """
 query WxMinMax($startDate: Date!, $endDate: Date, $stationIds: String) {
   wxMinMax(startDate: $startDate, endDate: $endDate, stationIds: $stationIds, hasHistoricData: ALL) {
@@ -96,7 +90,6 @@ query WxMinMax($startDate: Date!, $endDate: Date, $stationIds: String) {
   }
 }
 """
-
 Q_NFDR_MINMAX = """
 query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelModels: String) {
   nfdrMinMax(startDate: $startDate, endDate: $endDate, stationIds: $stationIds, fuelModels: $fuelModels, hasHistoricData: ALL) {
@@ -117,19 +110,17 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
 }
 """
 
-# ---------- Helper ----------
-def gql(query: str, variables: dict | None = None):
+def gql(endpoint: str, query: str, variables: dict | None = None):
     payload = {"query": query, "variables": variables}
-    r = requests.post(ENDPOINT, headers=HEADERS, auth=AUTH, data=json.dumps(payload), timeout=90)
-    print(f"[HTTP {r.status_code}] {ENDPOINT}")
-    # Try to decode JSON; if not JSON, print snippet for debugging
+    r = requests.post(endpoint, headers=HEADERS, auth=AUTH, json=payload, timeout=90)
+    print(f"[HTTP {r.status_code}] {endpoint}")
+    # Parse JSON or print body on failure
     try:
         j = r.json()
     except Exception:
-        print("Body (non-JSON):", r.text[:500])
+        print("Body:", r.text[:500])
         r.raise_for_status()
         raise
-    # Surface GraphQL errors clearly
     if "errors" in j:
         print("GraphQL errors:", j["errors"])
         r.raise_for_status()
@@ -137,23 +128,39 @@ def gql(query: str, variables: dict | None = None):
     r.raise_for_status()
     return j["data"]
 
-# ---------- 0) Smoke test auth/context  ----------
-# This MUST succeed first; if it fails, the auth/env pairing is wrong.
-meta = gql(Q_SMOKE_TEST, None)  # minimal query to validate auth/context
-print("StationMetaData _metadata:", meta["stationMetaData"]["_metadata"])
+def choose_endpoint():
+    # Try QA first; if QA throws the known context error, fall back to Prod
+    for ep in (ENDPOINT_QA, ENDPOINT_PROD):
+        try:
+            data = gql(ep, Q_SMOKE, None)
+            print("Smoke OK on:", ep, "metadata:", data["stationMetaData"]["_metadata"])
+            return ep
+        except Exception as e:
+            msg = str(e)
+            # The FEMS server often returns this when auth/env mismatch:
+            # "Context creation failed: Error: data and hash arguments required"
+            if "Context creation failed" in msg or "401" in msg or "403" in msg:
+                print("Auth/context failed on", ep, "— trying next endpoint…")
+                continue
+            # Other errors: bail out with details
+            raise
+    raise RuntimeError("No working endpoint: key likely mismatched to environment (QA vs Prod).")
 
-# ---------- 1) WEATHER OBS (last hour, UTC) ----------
-wx_data = gql(Q_WEATHER_OBS, {
+# ---- Decide endpoint automatically ----
+ENDPOINT = choose_endpoint()
+
+# ---- WEATHER OBS (last hour) ----
+wx_data = gql(ENDPOINT, Q_WEATHER_OBS, {
     "startDateTimeRange": start_dt_iso,
     "endDateTimeRange": end_dt_iso,
     "stationIds": station_ids_csv
 })["weatherObs"]["data"]
 df_wx = pd.DataFrame(wx_data)
 
-# ---------- 2) NFDRS OBS (last hour, UTC; loop fuel models) ----------
+# ---- NFDRS OBS (last hour, loop fuel models) ----
 nfdrs_frames = []
 for fm in FUEL_MODELS:
-    nfdrs_data = gql(Q_NFDRS_OBS, {
+    nfdrs_data = gql(ENDPOINT, Q_NFDRS_OBS, {
         "fuelModels": fm,
         "stationIds": station_ids_csv,
         "startDateRange": today_str,
@@ -165,18 +172,18 @@ for fm in FUEL_MODELS:
     nfdrs_frames.append(pd.DataFrame(nfdrs_data))
 df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True) if nfdrs_frames else pd.DataFrame()
 
-# ---------- 3) WX MIN/MAX (daily) ----------
-wxmm_data = gql(Q_WX_MINMAX, {
+# ---- WX MIN/MAX (daily) ----
+wxmm_data = gql(ENDPOINT, Q_WX_MINMAX, {
     "startDate": today_str,
     "endDate": today_str,
     "stationIds": station_ids_csv
 })["wxMinMax"]["data"]
 df_wxmm = pd.DataFrame(wxmm_data)
 
-# ---------- 4) NFDR MIN/MAX (daily; loop fuel models) ----------
+# ---- NFDR MIN/MAX (daily; loop fuel models) ----
 nfdrmm_frames = []
 for fm in FUEL_MODELS:
-    nfdrmm_data = gql(Q_NFDR_MINMAX, {
+    nfdrmm_data = gql(ENDPOINT, Q_NFDR_MINMAX, {
         "startDate": today_str,
         "endDate": today_str,
         "stationIds": station_ids_csv,
@@ -185,12 +192,11 @@ for fm in FUEL_MODELS:
     nfdrmm_frames.append(pd.DataFrame(nfdrmm_data))
 df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
 
-# ---------- WRITE outputs ----------
+# ---- Write outputs ----
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
-    if df.empty:
-        return
+    if df.empty: return
     header = not os.path.exists(path)
     df.to_csv(path, mode="a", header=header, index=False)
 
