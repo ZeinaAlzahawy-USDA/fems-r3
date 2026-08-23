@@ -13,7 +13,7 @@ concurrency:
 jobs:
   fetch-and-save:
     runs-on: ubuntu-latest
-    timeout-minutes: 60   # ~1 min run + 60 min sleep + a little buffer
+    timeout-minutes: 90   # ~1 min run + 60 min sleep + a little buffer
 
     steps:
       - name: Checkout
