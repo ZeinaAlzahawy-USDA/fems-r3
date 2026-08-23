@@ -1,33 +1,57 @@
-import os, base64, requests, pandas as pd
+import os
+import base64
+import requests
+import pandas as pd
 from datetime import datetime, timedelta, timezone
 
-# QA endpoint (dash in path)
-ENDPOINT = "https://fems.fs2c.usda.gov/api/extclimatology/graphql"  # PROD (no dash)
+# -----------------------------
+# Endpoint (QA, dash in path) — per FEMS guide
+# -----------------------------
+ENDPOINT = "https://fems-qa.fs2c.usda.gov/api/ext-climatology/graphql"  # QA
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
+# -----------------------------
+# Auth header (Basic RFC 7617)
+# -----------------------------
 USERNAME = os.environ["FEMS_USERNAME"]
-API_KEY = os.environ["FEMS_API_KEY"]
-BASIC = base64.b64encode(f"{USERNAME}:{API_KEY}".encode("ascii")).decode("ascii")
-HEADERS = {"Authorization": f"Basic {BASIC}", "Content-Type": "application/json"}
+API_KEY  = os.environ["FEMS_API_KEY"]
+BASIC    = base64.b64encode(f"{USERNAME}:{API_KEY}".encode("ascii")).decode("ascii")
+HEADERS  = {
+    "Authorization": f"Basic {BASIC}",
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+}
 
-# Load NM+AZ stations (one ID per line, no header)
+# -----------------------------
+# Load NM+AZ station IDs (one per line, no header)
+# -----------------------------
 stations_path = os.path.join(DATA_DIR, "stations.csv")
-station_ids = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
+station_ids   = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
 station_ids_csv = ",".join(station_ids)
 
+# -----------------------------
 # Time windows (UTC)
-now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+# -----------------------------
+now_utc         = datetime.utcnow().replace(tzinfo=timezone.utc)
 last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
 last_hour_end   = (last_hour_start + timedelta(hours=1)) - timedelta(seconds=1)
+
 start_dt_iso = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 end_dt_iso   = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-today_str = now_utc.strftime("%Y-%m-%d")
+today_str    = now_utc.strftime("%Y-%m-%d")
 
-# GraphQL queries
+# -----------------------------
+# GraphQL queries (from FEMS guide)
+# -----------------------------
 Q_WEATHER_OBS = """
 query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $stationIds: String) {
-  weatherObs(startDateTimeRange: $startDateTimeRange, endDateTimeRange: $endDateTimeRange, stationIds: $stationIds, hasHistoricData: ALL) {
+  weatherObs(
+    startDateTimeRange: $startDateTimeRange,
+    endDateTimeRange: $endDateTimeRange,
+    stationIds: $stationIds,
+    hasHistoricData: ALL
+  ) {
     data {
       station_id wrcc_id station_name latitude longitude elevation station_type
       observation_time observation_time_lst display_hour display_hour_lst
@@ -40,8 +64,17 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
 """
 
 Q_NFDRS_OBS = """
-query NfdrsObs($fuelModels: String!, $stationIds: String, $startDateRange: Date, $endDateRange: Date, $startHour: Int, $endHour: Int, $dateTimeFormat: DateTimeFormat) {
-  nfdrsObs(fuelModels: $fuelModels, stationIds: $stationIds, startDateRange: $startDateRange, endDateRange: $endDateRange, startHour: $startHour, endHour: $endHour, dateTimeFormat: $dateTimeFormat, hasHistoricData: ALL) {
+query NfdrsObs(
+  $fuelModels: String!, $stationIds: String,
+  $startDateRange: Date, $endDateRange: Date,
+  $startHour: Int, $endHour: Int, $dateTimeFormat: DateTimeFormat
+) {
+  nfdrsObs(
+    fuelModels: $fuelModels, stationIds: $stationIds,
+    startDateRange: $startDateRange, endDateRange: $endDateRange,
+    startHour: $startHour, endHour: $endHour,
+    dateTimeFormat: $dateTimeFormat, hasHistoricData: ALL
+  ) {
     data {
       station_name station_id wrcc_id latitude longitude elevation
       observation_time observation_time_lst display_hour display_hour_lst
@@ -88,26 +121,42 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
 }
 """
 
-def gql(query, variables):
+# -----------------------------
+# Request helper (prints server response on errors)
+# -----------------------------
+def gql(query: str, variables: dict):
     r = requests.post(ENDPOINT, json={"query": query, "variables": variables}, headers=HEADERS, timeout=90)
-    r.raise_for_status()
-    j = r.json()
+    print(f"[HTTP {r.status_code}] {ENDPOINT}")
+    # Try to show JSON or the first 500 chars of body to debug
+    try:
+        j = r.json()
+    except Exception:
+        print("Body (non-JSON):", r.text[:500])
+        r.raise_for_status()
+        raise
     if "errors" in j:
+        print("GraphQL errors:", j["errors"])
+        r.raise_for_status()
         raise RuntimeError(j["errors"])
+    r.raise_for_status()
     return j["data"]
 
-# WEATHER OBS (last hour)
-wx = gql(Q_WEATHER_OBS, {
+# -----------------------------
+# WEATHER OBS (hourly, last hour UTC)
+# -----------------------------
+wx_data = gql(Q_WEATHER_OBS, {
     "startDateTimeRange": start_dt_iso,
     "endDateTimeRange": end_dt_iso,
     "stationIds": station_ids_csv
 })["weatherObs"]["data"]
-df_wx = pd.DataFrame(wx)
+df_wx = pd.DataFrame(wx_data)
 
-# NFDRS OBS (last hour, loop fuel models)
+# -----------------------------
+# NFDRS OBS (hourly, UTC; loop fuel models)
+# -----------------------------
 nfdrs_frames = []
 for fm in FUEL_MODELS:
-    nf = gql(Q_NFDRS_OBS, {
+    nfdrs_data = gql(Q_NFDRS_OBS, {
         "fuelModels": fm,
         "stationIds": station_ids_csv,
         "startDateRange": today_str,
@@ -116,51 +165,58 @@ for fm in FUEL_MODELS:
         "endHour": int((last_hour_start + timedelta(hours=1)).strftime("%H")),
         "dateTimeFormat": "UTC"
     })["nfdrsObs"]["data"]
-    nfdrs_frames.append(pd.DataFrame(nf))
+    nfdrs_frames.append(pd.DataFrame(nfdrs_data))
 df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True) if nfdrs_frames else pd.DataFrame()
 
+# -----------------------------
 # WX MIN/MAX (daily)
-wxmm = gql(Q_WX_MINMAX, {
+# -----------------------------
+wxmm_data = gql(Q_WX_MINMAX, {
     "startDate": today_str,
     "endDate": today_str,
     "stationIds": station_ids_csv
 })["wxMinMax"]["data"]
-df_wxmm = pd.DataFrame(wxmm)
+df_wxmm = pd.DataFrame(wxmm_data)
 
+# -----------------------------
 # NFDR MIN/MAX (daily; loop fuel models)
+# -----------------------------
 nfdrmm_frames = []
 for fm in FUEL_MODELS:
-    nm = gql(Q_NFDR_MINMAX, {
+    nfdrmm_data = gql(Q_NFDR_MINMAX, {
         "startDate": today_str,
         "endDate": today_str,
         "stationIds": station_ids_csv,
         "fuelModels": fm
     })["nfdrMinMax"]["data"]
-    nfdrmm_frames.append(pd.DataFrame(nm))
+    nfdrmm_frames.append(pd.DataFrame(nfdrmm_data))
 df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
 
-# WRITE files
+# -----------------------------
+# WRITE outputs (history CSVs + latest Excel + combined Excel)
+# -----------------------------
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
-    if df.empty: return
+    if df.empty:
+        return
     header = not os.path.exists(path)
     df.to_csv(path, mode="a", header=header, index=False)
 
-append_csv(os.path.join(DATA_DIR, "history_weatherObs.csv"), df_wx)
-append_csv(os.path.join(DATA_DIR, "history_nfdrsObs.csv"), df_nfdrs)
-append_csv(os.path.join(DATA_DIR, "history_wxMinMax.csv"), df_wxmm)
+append_csv(os.path.join(DATA_DIR, "history_weatherObs.csv"),  df_wx)
+append_csv(os.path.join(DATA_DIR, "history_nfdrsObs.csv"),   df_nfdrs)
+append_csv(os.path.join(DATA_DIR, "history_wxMinMax.csv"),   df_wxmm)
 append_csv(os.path.join(DATA_DIR, "history_nfdrMinMax.csv"), df_nfdrmm)
 
-df_wx.to_excel(os.path.join(DATA_DIR, "fems_latest_weatherObs.xlsx"), index=False)
-df_nfdrs.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrsObs.xlsx"), index=False)
-df_wxmm.to_excel(os.path.join(DATA_DIR, "fems_latest_wxMinMax.xlsx"), index=False)
+df_wx.to_excel   (os.path.join(DATA_DIR, "fems_latest_weatherObs.xlsx"),  index=False)
+df_nfdrs.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrsObs.xlsx"),    index=False)
+df_wxmm.to_excel (os.path.join(DATA_DIR, "fems_latest_wxMinMax.xlsx"),    index=False)
 df_nfdrmm.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrMinMax.xlsx"), index=False)
 
 with pd.ExcelWriter(os.path.join(DATA_DIR, "fems_data.xlsx"), engine="openpyxl") as xw:
-    df_wx.to_excel(xw, sheet_name="weatherObs", index=False)
-    df_nfdrs.to_excel(xw, sheet_name="nfdrsObs", index=False)
-    df_wxmm.to_excel(xw, sheet_name="wxMinMax", index=False)
+    df_wx.to_excel   (xw, sheet_name="weatherObs",  index=False)
+    df_nfdrs.to_excel(xw, sheet_name="nfdrsObs",    index=False)
+    df_wxmm.to_excel (xw, sheet_name="wxMinMax",    index=False)
     df_nfdrmm.to_excel(xw, sheet_name="nfdrMinMax", index=False)
 
 print("Done: wrote latest + appended history.")
