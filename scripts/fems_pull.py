@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from requests.auth import HTTPBasicAuth
 
 # QA endpoint (dash in path) — per FEMS guide
-ENDPOINT = "https://fems-qa.fs2c.usda.gov/api/ext-climatology/graphql"  # QA
+ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # QA
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
