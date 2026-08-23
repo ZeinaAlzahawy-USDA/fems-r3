@@ -1,20 +1,16 @@
 name: FEMS Hourly Pull (NM+AZ)
 
 on:
-  workflow_dispatch:  # start it once manually
+  schedule:
+    - cron: "1 * * * *"   # run at minute 1 of every hour (UTC) to avoid top-of-hour delays
+  workflow_dispatch:       # optional manual run
 
 permissions:
   contents: write
 
-concurrency:
-  group: fems-hourly
-  cancel-in-progress: true
-
 jobs:
   fetch-and-save:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # ~1 min run + 60 min sleep + a little buffer
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,15 +48,3 @@ jobs:
             data/fems_latest_nfdrsObs.xlsx
             data/fems_latest_wxMinMax.xlsx
             data/fems_latest_nfdrMinMax.xlsx
-
-      # Sleep FIRST, then trigger the next run
-      - name: Wait exactly 1 hour
-        run: sleep 3600
-
-      - name: Trigger next run (exact hourly)
-        run: |
-          curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.ACTIONS_TRIGGER_PAT }}" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/fems.yml/dispatches \
-            -d '{"ref":"main"}'
