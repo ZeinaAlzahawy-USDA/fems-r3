@@ -8,12 +8,12 @@ from requests.auth import HTTPBasicAuth
 from zoneinfo import ZoneInfo
 
 # ========= CONFIG =========
-# PROD endpoint (dashed path), per FEMS guide
+# PROD endpoint (dashed path)
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
-# Basic Auth (RFC 7617): username = FEMS account, password = FEMS API key
+# Basic Auth (username = FEMS account, password = FEMS API key)
 USERNAME = os.environ["FEMS_USERNAME"]
 API_KEY  = os.environ["FEMS_API_KEY"]
 AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
@@ -245,7 +245,7 @@ format_columns(
     date_cols=["summary_date"]
 )
 
-# ========= WRITE OUTPUTS =========
+# ========= WRITE OUTPUTS (ONLY ORIGINAL FILES) =========
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
@@ -265,13 +265,6 @@ df_wx.to_excel   (os.path.join(DATA_DIR, "fems_latest_weatherObs.xlsx"),  index=
 df_nfdrs.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrsObs.xlsx"),    index=False)
 df_wxmm.to_excel (os.path.join(DATA_DIR, "fems_latest_wxMinMax.xlsx"),    index=False)
 df_nfdrmm.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrMinMax.xlsx"), index=False)
-
-# Small preview CSVs (last 500 rows) for GitHub table view
-N = 500
-df_wx.tail(N).to_csv   (os.path.join(DATA_DIR, "preview_weatherObs.csv"),   index=False)
-df_nfdrs.tail(N).to_csv(os.path.join(DATA_DIR, "preview_nfdrsObs.csv"),     index=False)
-df_wxmm.tail(N).to_csv (os.path.join(DATA_DIR, "preview_wxMinMax.csv"),     index=False)
-df_nfdrmm.tail(N).to_csv(os.path.join(DATA_DIR, "preview_nfdrMinMax.csv"),  index=False)
 
 # Combined snapshot Excel (latest hour, four sheets)
 with pd.ExcelWriter(os.path.join(DATA_DIR, "fems_data.xlsx"), engine="openpyxl") as xw:
