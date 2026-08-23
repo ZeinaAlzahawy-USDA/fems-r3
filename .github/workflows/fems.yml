@@ -1,16 +1,20 @@
 name: FEMS Hourly Pull (NM+AZ)
 
 on:
-  schedule:
-    - cron: "0 * * * *"   # every hour
-  workflow_dispatch:
+  workflow_dispatch:  # start it once manually
 
 permissions:
   contents: write
 
+concurrency:
+  group: fems-hourly
+  cancel-in-progress: true
+
 jobs:
   fetch-and-save:
     runs-on: ubuntu-latest
+    timeout-minutes: 60   # ~1 min run + 60 min sleep + a little buffer
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,8 +33,7 @@ jobs:
         env:
           FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
           FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
-        run: |
-          python scripts/fems_pull.py
+        run: python scripts/fems_pull.py
 
       - name: Commit history files
         run: |
@@ -50,13 +53,14 @@ jobs:
             data/fems_latest_wxMinMax.xlsx
             data/fems_latest_nfdrMinMax.xlsx
 
+      # Sleep FIRST, then trigger the next run
+      - name: Wait exactly 1 hour
+        run: sleep 3600
 
       - name: Trigger next run (exact hourly)
-        if: always()
         run: |
           curl -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.ACTIONS_TRIGGER_PAT }}" \
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/fems.yml/dispatches \
             -d '{"ref":"main"}'
-
