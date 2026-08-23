@@ -2,7 +2,7 @@ import os, base64, requests, pandas as pd
 from datetime import datetime, timedelta, timezone
 
 # QA endpoint (dash in path)
-ENDPOINT = "https://fems-qa.fs2c.usda.gov/api/ext-climatology/graphql"
+ENDPOINT = "https://fems.fs2c.usda.gov/api/extclimatology/graphql"  # PROD (no dash)
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
