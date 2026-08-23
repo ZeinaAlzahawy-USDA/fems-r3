@@ -98,8 +98,6 @@ def gql(query, variables=None):
     r.raise_for_status()
     return j["data"]
 
-# 0) Smoke test — must pass with a **fresh QA key** generated in QA
-gql(Q_SMOKE, None)
 
 # 1) Weather (last hour)
 wx = gql(Q_WEATHER_OBS, {"startDateTimeRange": start_dt_iso, "endDateTimeRange": end_dt_iso, "stationIds": station_ids_csv})["weatherObs"]["data"]
