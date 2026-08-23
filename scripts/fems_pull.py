@@ -133,16 +133,26 @@ def append_csv(path, df):
     if df.empty: return
     df.to_csv(path, mode="a", header=(not os.path.exists(path)), index=False)
 
+# APPEND history CSVs
 append_csv(os.path.join(DATA_DIR,"history_weatherObs.csv"), df_wx)
 append_csv(os.path.join(DATA_DIR,"history_nfdrsObs.csv"), df_nfdrs)
 append_csv(os.path.join(DATA_DIR,"history_wxMinMax.csv"), df_wxmm)
 append_csv(os.path.join(DATA_DIR,"history_nfdrMinMax.csv"), df_nfdrmm)
 
+# OVERWRITE “latest only” Excel files
 df_wx.to_excel   (os.path.join(DATA_DIR,"fems_latest_weatherObs.xlsx"),  index=False)
 df_nfdrs.to_excel(os.path.join(DATA_DIR,"fems_latest_nfdrsObs.xlsx"),    index=False)
 df_wxmm.to_excel (os.path.join(DATA_DIR,"fems_latest_wxMinMax.xlsx"),    index=False)
 df_nfdrmm.to_excel(os.path.join(DATA_DIR,"fems_latest_nfdrMinMax.xlsx"), index=False)
 
+# 🔎 NEW: small preview CSVs (render nicely in GitHub)
+N = 500  # last 500 rows for web preview
+df_wx.tail(N).to_csv   ("data/preview_weatherObs.csv",   index=False)
+df_nfdrs.tail(N).to_csv("data/preview_nfdrsObs.csv",     index=False)
+df_wxmm.tail(N).to_csv ("data/preview_wxMinMax.csv",     index=False)
+df_nfdrmm.tail(N).to_csv("data/preview_nfdrMinMax.csv",  index=False)
+
+# Combined snapshot Excel (latest hour)
 with pd.ExcelWriter(os.path.join(DATA_DIR,"fems_data.xlsx"), engine="openpyxl") as xw:
     df_wx.to_excel   (xw, sheet_name="weatherObs",  index=False)
     df_nfdrs.to_excel(xw, sheet_name="nfdrsObs",    index=False)
