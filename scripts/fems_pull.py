@@ -1,57 +1,53 @@
 import os
+import json
 import base64
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+from requests.auth import HTTPBasicAuth
 
-# -----------------------------
-# Endpoint (QA, dash in path) — per FEMS guide
-# -----------------------------
+# ---------- CONFIG ----------
+# Use QA endpoint (dash in path), per the FEMS guide.
 ENDPOINT = "https://fems-qa.fs2c.usda.gov/api/ext-climatology/graphql"  # QA
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
-# -----------------------------
-# Auth header (Basic RFC 7617)
-# -----------------------------
-USERNAME = os.environ["FEMS_USERNAME"]
-API_KEY  = os.environ["FEMS_API_KEY"]
-BASIC    = base64.b64encode(f"{USERNAME}:{API_KEY}".encode("ascii")).decode("ascii")
-HEADERS  = {
-    "Authorization": f"Basic {BASIC}",
+USERNAME = os.environ["FEMS_USERNAME"]          # e.g., abie.carabajal@usda.gov
+API_KEY  = os.environ["FEMS_API_KEY"]           # the FEMS API key
+
+# Build canonical Basic auth with requests' HTTPBasicAuth
+AUTH = HTTPBasicAuth(USERNAME, API_KEY)
+
+HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json"
 }
 
-# -----------------------------
-# Load NM+AZ station IDs (one per line, no header)
-# -----------------------------
+# ---------- STATIONS ----------
 stations_path = os.path.join(DATA_DIR, "stations.csv")
 station_ids   = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
 station_ids_csv = ",".join(station_ids)
 
-# -----------------------------
-# Time windows (UTC)
-# -----------------------------
+# ---------- TIME (UTC) ----------
 now_utc         = datetime.utcnow().replace(tzinfo=timezone.utc)
 last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
 last_hour_end   = (last_hour_start + timedelta(hours=1)) - timedelta(seconds=1)
-
 start_dt_iso = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 end_dt_iso   = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
 today_str    = now_utc.strftime("%Y-%m-%d")
 
-# -----------------------------
-# GraphQL queries (from FEMS guide)
-# -----------------------------
+# ---------- QUERIES (from the guide) ----------
+Q_SMOKE_TEST = """
+query StationMetaData {
+  stationMetaData(returnAll: true, hasHistoricData: ALL) {
+    _metadata { total_count }
+  }
+}
+"""
+
 Q_WEATHER_OBS = """
 query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $stationIds: String) {
-  weatherObs(
-    startDateTimeRange: $startDateTimeRange,
-    endDateTimeRange: $endDateTimeRange,
-    stationIds: $stationIds,
-    hasHistoricData: ALL
-  ) {
+  weatherObs(startDateTimeRange: $startDateTimeRange, endDateTimeRange: $endDateTimeRange, stationIds: $stationIds, hasHistoricData: ALL) {
     data {
       station_id wrcc_id station_name latitude longitude elevation station_type
       observation_time observation_time_lst display_hour display_hour_lst
@@ -121,19 +117,19 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
 }
 """
 
-# -----------------------------
-# Request helper (prints server response on errors)
-# -----------------------------
-def gql(query: str, variables: dict):
-    r = requests.post(ENDPOINT, json={"query": query, "variables": variables}, headers=HEADERS, timeout=90)
+# ---------- Helper ----------
+def gql(query: str, variables: dict | None = None):
+    payload = {"query": query, "variables": variables}
+    r = requests.post(ENDPOINT, headers=HEADERS, auth=AUTH, data=json.dumps(payload), timeout=90)
     print(f"[HTTP {r.status_code}] {ENDPOINT}")
-    # Try to show JSON or the first 500 chars of body to debug
+    # Try to decode JSON; if not JSON, print snippet for debugging
     try:
         j = r.json()
     except Exception:
         print("Body (non-JSON):", r.text[:500])
         r.raise_for_status()
         raise
+    # Surface GraphQL errors clearly
     if "errors" in j:
         print("GraphQL errors:", j["errors"])
         r.raise_for_status()
@@ -141,9 +137,12 @@ def gql(query: str, variables: dict):
     r.raise_for_status()
     return j["data"]
 
-# -----------------------------
-# WEATHER OBS (hourly, last hour UTC)
-# -----------------------------
+# ---------- 0) Smoke test auth/context  ----------
+# This MUST succeed first; if it fails, the auth/env pairing is wrong.
+meta = gql(Q_SMOKE_TEST, None)  # minimal query to validate auth/context
+print("StationMetaData _metadata:", meta["stationMetaData"]["_metadata"])
+
+# ---------- 1) WEATHER OBS (last hour, UTC) ----------
 wx_data = gql(Q_WEATHER_OBS, {
     "startDateTimeRange": start_dt_iso,
     "endDateTimeRange": end_dt_iso,
@@ -151,9 +150,7 @@ wx_data = gql(Q_WEATHER_OBS, {
 })["weatherObs"]["data"]
 df_wx = pd.DataFrame(wx_data)
 
-# -----------------------------
-# NFDRS OBS (hourly, UTC; loop fuel models)
-# -----------------------------
+# ---------- 2) NFDRS OBS (last hour, UTC; loop fuel models) ----------
 nfdrs_frames = []
 for fm in FUEL_MODELS:
     nfdrs_data = gql(Q_NFDRS_OBS, {
@@ -168,9 +165,7 @@ for fm in FUEL_MODELS:
     nfdrs_frames.append(pd.DataFrame(nfdrs_data))
 df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True) if nfdrs_frames else pd.DataFrame()
 
-# -----------------------------
-# WX MIN/MAX (daily)
-# -----------------------------
+# ---------- 3) WX MIN/MAX (daily) ----------
 wxmm_data = gql(Q_WX_MINMAX, {
     "startDate": today_str,
     "endDate": today_str,
@@ -178,9 +173,7 @@ wxmm_data = gql(Q_WX_MINMAX, {
 })["wxMinMax"]["data"]
 df_wxmm = pd.DataFrame(wxmm_data)
 
-# -----------------------------
-# NFDR MIN/MAX (daily; loop fuel models)
-# -----------------------------
+# ---------- 4) NFDR MIN/MAX (daily; loop fuel models) ----------
 nfdrmm_frames = []
 for fm in FUEL_MODELS:
     nfdrmm_data = gql(Q_NFDR_MINMAX, {
@@ -192,9 +185,7 @@ for fm in FUEL_MODELS:
     nfdrmm_frames.append(pd.DataFrame(nfdrmm_data))
 df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
 
-# -----------------------------
-# WRITE outputs (history CSVs + latest Excel + combined Excel)
-# -----------------------------
+# ---------- WRITE outputs ----------
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
