@@ -2,7 +2,7 @@ name: FEMS Hourly Pull (NM+AZ)
 
 on:
   schedule:
-    - cron: "1 * * * *"   # run at minute 1 of every hour (UTC) to avoid top-of-hour delays
+    - cron: "17 * * * *"  # run at minute 17 of every hour (UTC) to avoid top-of-hour delays
   workflow_dispatch:       # optional manual run
 
 permissions:
