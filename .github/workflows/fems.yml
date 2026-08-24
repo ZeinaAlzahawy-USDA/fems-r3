@@ -2,7 +2,7 @@ name: FEMS Hourly Pull (NM+AZ)
 
 on:
   schedule:
-    - cron: "0 * * * *" 
+    - cron: "12 * * * *" 
   workflow_dispatch:       # optional manual run
   repository_dispatch:
     types: [hourly-pull]
