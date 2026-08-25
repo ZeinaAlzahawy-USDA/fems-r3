@@ -15,7 +15,7 @@ DATA_DIR = "data"
 
 # Basic Auth (username = FEMS account, password = FEMS API key)
 USERNAME = os.environ["FEMS_USERNAME"]
-API_KEY  = os.environ["FEMS_API_KEY"]
+API_KEY["FEMS_USERNAME"  = os.environ
 AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
 
 HEADERS = {
@@ -26,7 +26,7 @@ HEADERS = {
 
 # ========= STATIONS =========
 stations_path   = os.path.join(DATA_DIR, "stations.csv")
-station_ids     = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
+station_ids["FEMS_API_KEY" = HTTPBasicAuth(, header=None)[0].astype(str).tolist()
 station_ids_csv = ",".join(station_ids)
 
 # ========= TIME WINDOWS (UTC) =========
@@ -154,46 +154,82 @@ wxmm = gql(Q_WX_MINMAX, {"startDate": today_str,
                          "stationIds": station_ids_csv})["wxMinMax"]["data"]
 df_wxmm = pd.DataFrame(wxmm)
 
-nfdrmm_frames = []
-for fm in FUEL_MODELS:
-    nm = gql(Q_NFDR_MINMAX, {"startDate": today_str,
+nfdr["data"xmm = pd.DataFrame(wxmm)
+
+mm_framesnm = gql(Q_NFDR_MINMAX, {"startDate": today_str,
                              "endDate": today_str,
                              "stationIds": station_ids_csv,
                              "fuelModels": fm})["nfdrMinMax"]["data"]
     nfdrmm_frames.append(pd.DataFrame(nm))
 df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
 
-# ========= DATE/TIME FORMATTERS (MDT/MST) =========
+# ========= SAFE DATE/TIME FORMATTERS (MDT/MST, keep bad timestamps "as is") =========
 MT = ZoneInfo("America/Denver")  # auto-handles MDT/MST by date
 
+def _as_is(dt_like):
+    """Return the original value as a string (for invalid/out-of-range inputs)."""
+    if dt_like is None:
+        return ""
+    try:
+        if pd.isna(dt_like):
+            return ""
+    except Exception:
+        pass
+    return str(dt_like)
+
 def _to_mt(dt_like):
-    if pd.isna(dt_like):
-        return np.nan
-    # try parse as UTC-aware first
-    dt = pd.to_datetime(dt_like, utc=True, errors="coerce")
-    if dt is not None and not pd.isna(dt):
-        return dt.tz_convert(MT)
-    # fallback: parse naive, assume UTC
-    dt = pd.to_datetime(dt_like, errors="coerce")
-    if pd.isna(dt):
-        return np.nan
-    if dt.tzinfo is None:
-        dt = dt.tz_localize("UTC")
-    return dt.tz_convert(MT)
+    """
+    Parse to pandas Timestamp (UTC) and convert to America/Denver.
+    Returns pd.Timestamp or NaT; never raises.
+    """
+    # Pandas treats strings and timestamps differently; coerce to UTC first
+    ts = pd.to_datetime(dt_like, utc=True, errors="coerce")
+    if ts is pd.NaT or pd.isna(ts):
+        return pd.NaT
+    try:
+        return ts.tz_convert(MT)
+    except Exception:
+        return pd.NaT
+
+def _valid_year(ts):
+    """Only accept years 1..9999; skip year 0 or anything that can't expose components."""
+    try:
+        y = int(ts.year)
+        return 1 <= y <= 9999
+    except Exception:
+        return False
 
 def fmt_time(dt_like):
-    dt_mt = _to_mt(dt_like)
-    if pd.isna(dt_mt):
-        return ""
-    return dt_mt.strftime("%-m/%-d/%Y %-H:%M %Z")  # e.g., 8/22/2026 19:00 MDT
+    """
+    If valid: 'M/D/YYYY H:MM MDT|MST'.
+    If invalid/out-of-range: return original value (as-is).
+    """
+    ts = _to_mt(dt_like)
+    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
+        return _as_is(dt_like)
+    m = ts.month
+    d = ts.day
+    y = ts.year
+    hh = ts.hour
+    mm = ts.minute
+    tz = ts.tzname() or "MT"
+    return f"{m}/{d}/{y} {hh:02d}:{mm:02d} {tz}"
 
 def fmt_date(dt_like):
-    dt_mt = _to_mt(dt_like)
-    if pd.isna(dt_mt):
-        return ""
-    return dt_mt.strftime("%-m/%-d/%Y")           # e.g., 8/22/2026
+    """
+    If valid: 'M/D/YYYY'.
+    If invalid/out-of-range: return original value (as-is).
+    """
+    ts = _to_mt(dt_like)
+    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
+        return _as_is(dt_like)
+    m = ts.month
+    d = ts.day
+    y = ts.year
+    return f"{m}/{d}/{y}"
 
 def format_columns(df, time_cols=None, date_cols=None):
+    """Apply formatting in-place if columns exist; robust to bad values."""
     time_cols = time_cols or []
     date_cols = date_cols or []
     for c in time_cols:
@@ -242,7 +278,8 @@ format_columns(
         "hun_hr_tl_fuel_moisture_min_time",
         "thou_hr_tl_fuel_moisture_min_time"
     ],
-    date_cols=["summary_date"]
+    date[
+ignitionmmary_date"]
 )
 
 # ========= WRITE OUTPUTS (ONLY ORIGINAL FILES) =========
@@ -273,4 +310,4 @@ with pd.ExcelWriter(os.path.join(DATA_DIR, "fems_data.xlsx"), engine="openpyxl")
     df_wxmm.to_excel (xw, sheet_name="wxMinMax",    index=False)
     df_nfdrmm.to_excel(xw, sheet_name="nfdrMinMax", index=False)
 
-print("Done (Prod, MT formatted).")
+print("Done (Prod, MT formatted; bad timestamps kept as-is).")
