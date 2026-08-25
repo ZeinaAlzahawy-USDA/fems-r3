@@ -8,7 +8,8 @@ from requests.auth import HTTPBasicAuth
 from zoneinfo import ZoneInfo
 
 # ========= CONFIG =========
-ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD (dashed path)
+# PROD endpoint (dashed path)
+ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
@@ -133,8 +134,8 @@ def gql(query, variables=None):
 # ========= RUN QUERIES =========
 wx  = gql(Q_WEATHER_OBS, {"startDateTimeRange": start_dt_iso,
                           "endDateTimeRange": end_dt_iso,
-                          "["data" RUN QUERIES =========
- = gql(Q_WEATHER_OBS, {"startDateTimeRangee(wx)
+                          "stationIds": station_ids_csv})["weatherObs"]["data"]
+df_wx = pd.DataFrame(wx)
 
 nfdrs_frames = []
 for fm in FUEL_MODELS:
@@ -162,77 +163,42 @@ for fm in FUEL_MODELS:
     nfdrmm_frames.append(pd.DataFrame(nm))
 df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
 
-# ========= SAFE DATE/TIME FORMATTERS (MDT/MST, keep bad timestamps "as is") =========
+# ========= DATE/TIME FORMATTERS (MDT/MST) =========
 MT = ZoneInfo("America/Denver")  # auto-handles MDT/MST by date
 
-def _as_is(dt_like):
-    """Return the original value as a string (for invalid/out-of-range inputs)."""
-    if dt_like is None:
-        return ""
-    try:
-        if pd.isna(dt_like):
-            return ""
-    except Exception:
-        pass
-    return str(dt_like)
-
 def _to_mt(dt_like):
-    """
-    Parse to pandas Timestamp (UTC) and convert to America/Denver.
-    Returns pd.Timestamp or NaT; never raises.
-    """
-    ts = pd.to_datetime(dt_like, utc=True, errors="coerce")
-    if ts is pd.NaT or pd.isna(ts):
-        return pd.NaT
-    try:
-        return ts.tz_convert(MT)
-    except Exception:
-        return pd.NaT
-
-def _valid_year(ts):
-    """Only accept years 1..9999; skip year 0 or anything that can't expose components."""
-    try:
-        y = int(ts.year)
-        return 1 <= y <= 9999
-    except Exception:
-        return False
+    if pd.isna(dt_like):
+        return np.nan
+    # try parse as UTC-aware first
+    dt = pd.to_datetime(dt_like, utc=True, errors="coerce")
+    if dt is not None and not pd.isna(dt):
+        return dt.tz_convert(MT)
+    # fallback: parse naive, assume UTC
+    dt = pd.to_datetime(dt_like, errors="coerce")
+    if pd.isna(dt):
+        return np.nan
+    if dt.tzinfo is None:
+        dt = dt.tz_localize("UTC")
+    return dt.tz_convert(MT)
 
 def fmt_time(dt_like):
-    """
-    If valid: 'M/D/YYYY H:MM MDT|MST'.
-    If invalid/out-of-range: return original value (as-is).
-    """
-    ts = _to_mt(dt_like)
-    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
-        return _as_is(dt_like)
-    m = ts.month
-    d = ts.day
-    y = ts.year
-    hh = ts.hour
-    mm = ts.minute
-    tz = ts.tzname() or "MT"
-    return f"{m}/{d}/{y} {hh:02d}:{mm:02d} {tz}"
+    dt_mt = _to_mt(dt_like)
+    if pd.isna(dt_mt):
+        return ""
+    return dt_mt.strftime("%-m/%-d/%Y %-H:%M %Z")  # e.g., 8/22/2026 19:00 MDT
 
 def fmt_date(dt_like):
-    """
-    If valid: 'M/D/YYYY'.
-    If invalid/out-of-range: return original value (as-is).
-    """
-    ts = _to_mt(dt_like)
-    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
-        return _as_is(dt_like)
-    m = ts.month
-    d = ts.day
-    y = ts.year
-    return f"{m}/{d}/{y}"
+    dt_mt = _to_mt(dt_like)
+    if pd.isna(dt_mt):
+        return ""
+    return dt_mt.strftime("%-m/%-d/%Y")           # e.g., 8/22/2026
 
 def format_columns(df, time_cols=None, date_cols=None):
-    """Apply formatting in-place if columns exist; robust to bad values."""
     time_cols = time_cols or []
     date_cols = date_cols or []
     for c in time_cols:
         if c in df.columns:
-            df[ in time_].apply(fmt_time)
+            df[c] = df[c].apply(fmt_time)
     for c in date_cols:
         if c in df.columns:
             df[c] = df[c].apply(fmt_date)
@@ -241,10 +207,8 @@ def format_columns(df, time_cols=None, date_cols=None):
 format_columns(
     df_wx,
     time_cols=[
-        "observation_time",
-        "observation_time_lst",
-        "display_hour",
-        "display_hour_lst",
+        "observation_time", "observation_time_lst",
+        "display_hour", "display_hour_lst",
         "masked_observation_time"
     ],
     date_cols=["display_date"]
@@ -253,15 +217,14 @@ format_columns(
 format_columns(
     df_nfdrs,
     time_cols=[
-        "observation_time",
-        "observation_time_lst",
-        "display_hour",
-        "display_hour_lst",
+        "observation_time", "observation_time_lst",
+        "display_hour", "display_hour_lst",
         "nfdr_time"
     ],
-    date[
-observation_time",
-observation_time(
+    date_cols=["nfdr_date"]
+)
+
+format_columns(
     df_wxmm,
     time_cols=["peak_wind_gust_time"],
     date_cols=["summary_date"]
@@ -282,7 +245,7 @@ format_columns(
     date_cols=["summary_date"]
 )
 
-# ========= WRITE OUTPUTS =========
+# ========= WRITE OUTPUTS (ONLY ORIGINAL FILES) =========
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
@@ -310,4 +273,4 @@ with pd.ExcelWriter(os.path.join(DATA_DIR, "fems_data.xlsx"), engine="openpyxl")
     df_wxmm.to_excel (xw, sheet_name="wxMinMax",    index=False)
     df_nfdrmm.to_excel(xw, sheet_name="nfdrMinMax", index=False)
 
-print("Done (Prod, MT formatted; bad timestamps kept as-is).")
+print("Done (Prod, MT formatted).")
