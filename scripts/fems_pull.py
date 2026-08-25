@@ -163,37 +163,72 @@ for fm in FUEL_MODELS:
     nfdrmm_frames.append(pd.DataFrame(nm))
 df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
 
-# ========= DATE/TIME FORMATTERS (MDT/MST) =========
+# ========= SAFE DATE/TIME FORMATTERS (MDT/MST, keep bad timestamps "as is") =========
 MT = ZoneInfo("America/Denver")  # auto-handles MDT/MST by date
 
+def _as_is(dt_like):
+    """Return the original value as a string (for invalid/out-of-range inputs)."""
+    if dt_like is None:
+        return ""
+    try:
+        if pd.isna(dt_like):
+            return ""
+    except Exception:
+        pass
+    return str(dt_like)
+
 def _to_mt(dt_like):
-    if pd.isna(dt_like):
-        return np.nan
-    # try parse as UTC-aware first
-    dt = pd.to_datetime(dt_like, utc=True, errors="coerce")
-    if dt is not None and not pd.isna(dt):
-        return dt.tz_convert(MT)
-    # fallback: parse naive, assume UTC
-    dt = pd.to_datetime(dt_like, errors="coerce")
-    if pd.isna(dt):
-        return np.nan
-    if dt.tzinfo is None:
-        dt = dt.tz_localize("UTC")
-    return dt.tz_convert(MT)
+    """
+    Parse to pandas Timestamp (UTC) and convert to America/Denver.
+    Returns pd.Timestamp or NaT; never raises.
+    """
+    ts = pd.to_datetime(dt_like, utc=True, errors="coerce")
+    if ts is pd.NaT or pd.isna(ts):
+        return pd.NaT
+    try:
+        return ts.tz_convert(MT)
+    except Exception:
+        return pd.NaT
+
+def _valid_year(ts):
+    """Accept years 1..9999 only (Python/Pandas constraint)."""
+    try:
+        y = int(ts.year)
+        return 1 <= y <= 9999
+    except Exception:
+        return False
 
 def fmt_time(dt_like):
-    dt_mt = _to_mt(dt_like)
-    if pd.isna(dt_mt):
-        return ""
-    return dt_mt.strftime("%-m/%-d/%Y %-H:%M %Z")  # e.g., 8/22/2026 19:00 MDT
+    """
+    If valid: 'M/D/YYYY H:MM MDT|MST'.
+    If invalid/out-of-range: return original value (as-is).
+    """
+    ts = _to_mt(dt_like)
+    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
+        return _as_is(dt_like)
+    m = ts.month
+    d = ts.day
+    y = ts.year
+    hh = ts.hour
+    mm = ts.minute
+    tz = ts.tzname() or "MT"
+    return f"{m}/{d}/{y} {hh:02d}:{mm:02d} {tz}"
 
 def fmt_date(dt_like):
-    dt_mt = _to_mt(dt_like)
-    if pd.isna(dt_mt):
-        return ""
-    return dt_mt.strftime("%-m/%-d/%Y")           # e.g., 8/22/2026
+    """
+    If valid: 'M/D/YYYY'.
+    If invalid/out-of-range: return original value (as-is).
+    """
+    ts = _to_mt(dt_like)
+    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
+        return _as_is(dt_like)
+    m = ts.month
+    d = ts.day
+    y = ts.year
+    return f"{m}/{d}/{y}"
 
 def format_columns(df, time_cols=None, date_cols=None):
+    """Apply formatting in-place if columns exist; robust to bad values."""
     time_cols = time_cols or []
     date_cols = date_cols or []
     for c in time_cols:
