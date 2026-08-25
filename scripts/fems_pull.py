@@ -8,14 +8,13 @@ from requests.auth import HTTPBasicAuth
 from zoneinfo import ZoneInfo
 
 # ========= CONFIG =========
-# PROD endpoint (dashed path)
-ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
+ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD (dashed path)
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
 # Basic Auth (username = FEMS account, password = FEMS API key)
 USERNAME = os.environ["FEMS_USERNAME"]
-API_KEY["FEMS_USERNAME"  = os.environ
+API_KEY  = os.environ["FEMS_API_KEY"]
 AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
 
 HEADERS = {
@@ -26,7 +25,7 @@ HEADERS = {
 
 # ========= STATIONS =========
 stations_path   = os.path.join(DATA_DIR, "stations.csv")
-station_ids["FEMS_API_KEY" = HTTPBasicAuth(, header=None)[0].astype(str).tolist()
+station_ids     = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
 station_ids_csv = ",".join(station_ids)
 
 # ========= TIME WINDOWS (UTC) =========
@@ -134,8 +133,8 @@ def gql(query, variables=None):
 # ========= RUN QUERIES =========
 wx  = gql(Q_WEATHER_OBS, {"startDateTimeRange": start_dt_iso,
                           "endDateTimeRange": end_dt_iso,
-                          "stationIds": station_ids_csv})["weatherObs"]["data"]
-df_wx = pd.DataFrame(wx)
+                          "["data" RUN QUERIES =========
+ = gql(Q_WEATHER_OBS, {"startDateTimeRangee(wx)
 
 nfdrs_frames = []
 for fm in FUEL_MODELS:
@@ -154,9 +153,9 @@ wxmm = gql(Q_WX_MINMAX, {"startDate": today_str,
                          "stationIds": station_ids_csv})["wxMinMax"]["data"]
 df_wxmm = pd.DataFrame(wxmm)
 
-nfdr["data"xmm = pd.DataFrame(wxmm)
-
-mm_framesnm = gql(Q_NFDR_MINMAX, {"startDate": today_str,
+nfdrmm_frames = []
+for fm in FUEL_MODELS:
+    nm = gql(Q_NFDR_MINMAX, {"startDate": today_str,
                              "endDate": today_str,
                              "stationIds": station_ids_csv,
                              "fuelModels": fm})["nfdrMinMax"]["data"]
@@ -182,7 +181,6 @@ def _to_mt(dt_like):
     Parse to pandas Timestamp (UTC) and convert to America/Denver.
     Returns pd.Timestamp or NaT; never raises.
     """
-    # Pandas treats strings and timestamps differently; coerce to UTC first
     ts = pd.to_datetime(dt_like, utc=True, errors="coerce")
     if ts is pd.NaT or pd.isna(ts):
         return pd.NaT
@@ -234,7 +232,7 @@ def format_columns(df, time_cols=None, date_cols=None):
     date_cols = date_cols or []
     for c in time_cols:
         if c in df.columns:
-            df[c] = df[c].apply(fmt_time)
+            df[ in time_].apply(fmt_time)
     for c in date_cols:
         if c in df.columns:
             df[c] = df[c].apply(fmt_date)
@@ -243,8 +241,10 @@ def format_columns(df, time_cols=None, date_cols=None):
 format_columns(
     df_wx,
     time_cols=[
-        "observation_time", "observation_time_lst",
-        "display_hour", "display_hour_lst",
+        "observation_time",
+        "observation_time_lst",
+        "display_hour",
+        "display_hour_lst",
         "masked_observation_time"
     ],
     date_cols=["display_date"]
@@ -253,14 +253,15 @@ format_columns(
 format_columns(
     df_nfdrs,
     time_cols=[
-        "observation_time", "observation_time_lst",
-        "display_hour", "display_hour_lst",
+        "observation_time",
+        "observation_time_lst",
+        "display_hour",
+        "display_hour_lst",
         "nfdr_time"
     ],
-    date_cols=["nfdr_date"]
-)
-
-format_columns(
+    date[
+observation_time",
+observation_time(
     df_wxmm,
     time_cols=["peak_wind_gust_time"],
     date_cols=["summary_date"]
@@ -278,11 +279,10 @@ format_columns(
         "hun_hr_tl_fuel_moisture_min_time",
         "thou_hr_tl_fuel_moisture_min_time"
     ],
-    date[
-ignitionmmary_date"]
+    date_cols=["summary_date"]
 )
 
-# ========= WRITE OUTPUTS (ONLY ORIGINAL FILES) =========
+# ========= WRITE OUTPUTS =========
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
