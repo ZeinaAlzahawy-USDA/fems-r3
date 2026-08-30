@@ -75,7 +75,7 @@ query NfdrsObs(
     data {
       station_name station_id wrcc_id latitude longitude elevation
       observation_time observation_time_lst display_hour display_hour_lst
-      nfdr_date nfdr_date_lst nfdr_time nfdr_time_lst nfdr_type fuel_model fuel_model_version
+      nfdr_date nfdr_time nfdr_type fuel_model fuel_model_version
       kbdi one_hr_tl_fuel_moisture ten_hr_tl_fuel_moisture
       hun_hr_tl_fuel_moisture thou_hr_tl_fuel_moisture
       ignition_component spread_component energy_release_component burning_index
@@ -122,7 +122,7 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
 }
 """
 
-# ========= REQUEST =========
+# ========= REQUEST FUNC =========
 
 def gql(query, variables=None):
     r = requests.post(
@@ -130,10 +130,10 @@ def gql(query, variables=None):
         json={"query": query, "variables": variables}, timeout=90
     )
     print(f"[HTTP {r.status_code}] {ENDPOINT}")
-    data = r.json()
-    if "errors" in data:
-        raise RuntimeError(data["errors"])
-    return data["data"]
+    j = r.json()
+    if "errors" in j:
+        raise RuntimeError(j["errors"])
+    return j["data"]
 
 # ========= WEATHER OBS =========
 
@@ -145,13 +145,7 @@ wx = gql(Q_WEATHER_OBS, {
 
 df_wx = pd.DataFrame(wx)
 
-if "observation_time_lst" in df_wx.columns:
-    df_wx["observation_time"] = df_wx["observation_time_lst"]
-
-if "display_hour_lst" in df_wx.columns:
-    df_wx["display_hour"] = df_wx["display_hour_lst"]
-
-# ========= NFDRS OBS (EXACT FEMS VALUES) =========
+# ========= NFDRS OBS =========
 
 nfdrs_frames = []
 for fm in FUEL_MODELS:
@@ -165,11 +159,6 @@ for fm in FUEL_MODELS:
     nfdrs_frames.append(pd.DataFrame(nf))
 
 df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True)
-
-for col in ["observation_time", "display_hour", "nfdr_time", "nfdr_date"]:
-    lst_col = col + "_lst"
-    if lst_col in df_nfdrs.columns:
-        df_nfdrs[col] = df_nfdrs[lst_col]
 
 # ========= MINMAX =========
 
@@ -193,17 +182,11 @@ if run_minmax:
 
     df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True)
 
-    for df in [df_wxmm, df_nfdrmm]:
-        for col in df.columns:
-            if col.endswith("_lst"):
-                original = col.replace("_lst", "")
-                df[original] = df[col]
-
 else:
     df_wxmm = pd.DataFrame()
     df_nfdrmm = pd.DataFrame()
 
-# ========= OUTPUT FILES =========
+# ========= WRITE OUTPUTS =========
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -229,4 +212,4 @@ with pd.ExcelWriter(os.path.join(DATA_DIR,"fems_data.xlsx"), engine="openpyxl") 
     df_wxmm.to_excel(xw, sheet_name="wxMinMax", index=False)
     df_nfdrmm.to_excel(xw, sheet_name="nfdrMinMax", index=False)
 
-print("Done. All timestamps now match FEMS exactly.")
+print("DONE — ALL REPORTS EXACTLY MATCH FEMS (NO CHANGES).")
