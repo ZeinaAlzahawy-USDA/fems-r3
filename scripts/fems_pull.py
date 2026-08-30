@@ -5,13 +5,13 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
 from requests.auth import HTTPBasicAuth
-from zoneinfo import ZoneInfo
 
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
+# Auth
 USERNAME = os.environ["FEMS_USERNAME"]
 API_KEY  = os.environ["FEMS_API_KEY"]
 AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
@@ -22,24 +22,18 @@ HEADERS = {
     "User-Agent": "FEMS-NM-AZ-GitHubActions/1.0"
 }
 
-# ========= LOAD CLEAN STATION FILES =========
+# ========= LOAD STATION LISTS (IDs only) =========
 nm_stations = set(pd.read_csv(os.path.join(DATA_DIR, "stations_nm.csv"), header=None)[0].astype(str))
 az_stations = set(pd.read_csv(os.path.join(DATA_DIR, "stations_az.csv"), header=None)[0].astype(str))
 
-def get_station_timezone(station_id):
-    sid = str(station_id)
-    if sid in az_stations:
-        return ZoneInfo("America/Phoenix")
-    return ZoneInfo("America/Denver")
-
-# Combine NM + AZ stations to query FEMS
+# Combined list for FEMS query
 station_ids = list(nm_stations | az_stations)
 station_ids_csv = ",".join(station_ids)
 
 # ========= TIME WINDOWS =========
 now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
 
-# Hour window for WeatherObs, not NFDRS Observed
+# WeatherObs uses last hour
 last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
 last_hour_end   = last_hour_start + timedelta(hours=1) - timedelta(seconds=1)
 
@@ -47,10 +41,10 @@ start_dt_iso = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 end_dt_iso   = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
 today_str    = now_utc.strftime("%Y-%m-%d")
 
-# MinMax refresh only at midnight
+# MinMax once per day (midnight)
 run_minmax = (now_utc.hour == 0)
 
-# ======================= QUERIES =======================
+# ========= QUERIES =========
 
 Q_WEATHER_OBS = """
 query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $stationIds: String) {
@@ -63,7 +57,7 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
     data {
       station_id station_name wrcc_id latitude longitude elevation station_type
       observation_time observation_time_lst display_hour display_hour_lst
-      masked_observation_time display_date
+      masked_observation_time display_date display_date_lst
       temperature relative_humidity hourly_precip wind_speed wind_direction
       peak_gust_speed peak_gust_dir sol_rad snow_flag observation_type
     }
@@ -71,7 +65,7 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
 }
 """
 
-# FIXED: REMOVE hourly filtering here so NFDRS Obs matches FEMS exactly
+# NFDRS Obs — NO hour filtering (pulls exact observed daily record)
 Q_NFDRS_OBS = """
 query NfdrsObs(
   $fuelModels: String!, $stationIds: String,
@@ -86,7 +80,7 @@ query NfdrsObs(
     data {
       station_name station_id wrcc_id latitude longitude elevation
       observation_time observation_time_lst display_hour display_hour_lst
-      nfdr_date nfdr_time nfdr_type fuel_model fuel_model_version
+      nfdr_date nfdr_date_lst nfdr_time nfdr_time_lst nfdr_type fuel_model fuel_model_version
       kbdi one_hr_tl_fuel_moisture ten_hr_tl_fuel_moisture
       hun_hr_tl_fuel_moisture thou_hr_tl_fuel_moisture
       ignition_component spread_component energy_release_component burning_index
@@ -100,10 +94,13 @@ Q_WX_MINMAX = """
 query WxMinMax($startDate: Date!, $endDate: Date, $stationIds: String) {
   wxMinMax(startDate: $startDate, endDate: $endDate, stationIds: $stationIds, hasHistoricData: ALL) {
     data {
-      station_name station_id wrcc_id latitude longitude elevation summary_date observation_type
+      station_name station_id wrcc_id latitude longitude elevation 
+      summary_date summary_date_lst observation_type
       temperature_min temperature_max relative_humidity_min relative_humidity_max
-      wind_speed_min wind_speed_max peak_gust_speed_min peak_gust_speed_max
-      peak_wind_gust_time solar_radiation_max daily_precipitation_total snow_flag
+      wind_speed_min wind_speed_max
+      peak_gust_speed_min peak_gust_speed_max
+      peak_wind_gust_time peak_wind_gust_time_lst
+      solar_radiation_max daily_precipitation_total snow_flag
     }
   }
 }
@@ -113,16 +110,16 @@ Q_NFDR_MINMAX = """
 query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelModels: String) {
   nfdrMinMax(startDate: $startDate, endDate: $endDate, stationIds: $stationIds, fuelModels: $fuelModels, hasHistoricData: ALL) {
     data {
-      station_id station_name summary_date nfdr_type fuel_model
+      station_id station_name summary_date summary_date_lst nfdr_type fuel_model
       kbdi gsi
-      ignition_component_max ignition_component_max_time
-      spread_component_max spread_component_max_time
-      energy_release_component_max energy_release_component_max_time
-      burning_index_max burning_index_max_time
-      one_hr_tl_fuel_moisture_min one_hr_tl_fuel_moisture_min_time
-      ten_hr_tl_fuel_moisture_min ten_hr_tl_fuel_moisture_min_time
-      hun_hr_tl_fuel_moisture_min hun_hr_tl_fuel_moisture_min_time
-      thou_hr_tl_fuel_moisture_min thou_hr_tl_fuel_moisture_min_time
+      ignition_component_max ignition_component_max_time ignition_component_max_time_lst
+      spread_component_max spread_component_max_time spread_component_max_time_lst
+      energy_release_component_max energy_release_component_max_time energy_release_component_max_time_lst
+      burning_index_max burning_index_max_time burning_index_max_time_lst
+      one_hr_tl_fuel_moisture_min one_hr_tl_fuel_moisture_min_time one_hr_tl_fuel_moisture_min_time_lst
+      ten_hr_tl_fuel_moisture_min ten_hr_tl_fuel_moisture_min_time ten_hr_tl_fuel_moisture_min_time_lst
+      hun_hr_tl_fuel_moisture_min hun_hr_tl_fuel_moisture_min_time hun_hr_tl_fuel_moisture_min_time_lst
+      thou_hr_tl_fuel_moisture_min thou_hr_tl_fuel_moisture_min_time thou_hr_tl_fuel_moisture_min_time_lst
       herbaceous_lfi_fuel_moisture woody_lfi_fuel_moisture
       latitude longitude elevation
     }
@@ -130,7 +127,7 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
 }
 """
 
-# ========= REQUEST FUNCTION =========
+# ========= REQUEST =========
 def gql(query, variables=None):
     r = requests.post(
         ENDPOINT, headers=HEADERS, auth=AUTH,
@@ -143,10 +140,9 @@ def gql(query, variables=None):
 
     if j.get("errors"):
         raise RuntimeError(j["errors"])
-    r.raise_for_status()
     return j["data"]
 
-# ========= WEATHER OBSERVATIONS (last hour only) =========
+# ========= WEATHER OBSERVATIONS =========
 wx = gql(Q_WEATHER_OBS, {
     "startDateTimeRange": start_dt_iso,
     "endDateTimeRange": end_dt_iso,
@@ -154,7 +150,17 @@ wx = gql(Q_WEATHER_OBS, {
 })["weatherObs"]["data"]
 df_wx = pd.DataFrame(wx)
 
-# ========= NFDRS OBSERVED — FIXED TO MATCH FEMS EXACTLY =========
+# Replace UTC timestamps with FEMS local *_lst fields
+if "observation_time_lst" in df_wx.columns:
+    df_wx["observation_time"] = df_wx["observation_time_lst"]
+
+if "display_hour_lst" in df_wx.columns:
+    df_wx["display_hour"] = df_wx["display_hour_lst"]
+
+if "display_date_lst" in df_wx.columns:
+    df_wx["display_date"] = df_wx["display_date_lst"]
+
+# ========= NFDRS OBSERVED =========
 nfdrs_frames = []
 for fm in FUEL_MODELS:
     nf = gql(Q_NFDRS_OBS, {
@@ -168,7 +174,13 @@ for fm in FUEL_MODELS:
 
 df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True) if nfdrs_frames else pd.DataFrame()
 
-# ========= MINMAX (midnight only) =========
+# Replace with actual FEMS *_lst fields
+for col in ["observation_time", "display_hour", "nfdr_time", "nfdr_date"]:
+    lst_col = col + "_lst"
+    if lst_col in df_nfdrs.columns:
+        df_nfdrs[col] = df_nfdrs[lst_col]
+
+# ========= MINMAX =========
 if run_minmax:
     wxmm = gql(Q_WX_MINMAX, {
         "startDate": today_str,
@@ -189,99 +201,16 @@ if run_minmax:
 
     df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True)
 
+    # Use *_lst fields if available
+    for df in [df_wxmm, df_nfdrmm]:
+        for col in df.columns:
+            if col.endswith("_lst"):
+                original = col.replace("_lst","")
+                df[original] = df[col]
+
 else:
     df_wxmm = pd.DataFrame()
     df_nfdrmm = pd.DataFrame()
-
-# ========= TIMEZONE CONVERSION =========
-def _as_is(v):
-    if v is None:
-        return ""
-    try:
-        if pd.isna(v):
-            return ""
-    except:
-        pass
-    return str(v)
-
-def to_local(dt, station_id):
-    ts = pd.to_datetime(dt, utc=True, errors="coerce")
-    if ts is pd.NaT:
-        return pd.NaT
-    tz = get_station_timezone(station_id)
-    try:
-        return ts.tz_convert(tz)
-    except:
-        return pd.NaT
-
-def fmt_time(dt, station_id):
-    ts = to_local(dt, station_id)
-    if ts is pd.NaT:
-        return _as_is(dt)
-    return f"{ts.month}/{ts.day}/{ts.year} {ts.hour:02d}:{ts.minute:02d} {ts.tzname()}"
-
-def fmt_date(dt, station_id):
-    ts = to_local(dt, station_id)
-    if ts is pd.NaT:
-        return _as_is(dt)
-    return f"{ts.month}/{ts.day}/{ts.year}"
-
-# ========= FIXED APPLY FORMATTER =========
-def apply_time_formatting(df, time_cols, date_cols):
-    if df.empty:
-        return
-
-    # Convert type first to avoid LossySetitemError
-    for c in time_cols + date_cols:
-        if c in df.columns:
-            df[c] = df[c].astype(str)
-
-    for idx, row in df.iterrows():
-        sid = row.get("station_id")
-
-        for c in time_cols:
-            if c in df.columns:
-                df.at[idx, c] = fmt_time(row[c], sid)
-
-        for c in date_cols:
-            if c in df.columns:
-                df.at[idx, c] = fmt_date(row[c], sid)
-
-# ========= APPLY FORMATTING =========
-apply_time_formatting(
-    df_wx,
-    ["observation_time", "observation_time_lst", "display_hour",
-     "display_hour_lst", "masked_observation_time"],
-    ["display_date"]
-)
-
-apply_time_formatting(
-    df_nfdrs,
-    ["observation_time", "observation_time_lst", "display_hour",
-     "display_hour_lst", "nfdr_time"],
-    ["nfdr_date"]
-)
-
-apply_time_formatting(
-    df_wxmm,
-    ["peak_wind_gust_time"],
-    ["summary_date"]
-)
-
-apply_time_formatting(
-    df_nfdrmm,
-    [
-        "ignition_component_max_time",
-        "spread_component_max_time",
-        "energy_release_component_max_time",
-        "burning_index_max_time",
-        "one_hr_tl_fuel_moisture_min_time",
-        "ten_hr_tl_fuel_moisture_min_time",
-        "hun_hr_tl_fuel_moisture_min_time",
-        "thou_hr_tl_fuel_moisture_min_time"
-    ],
-    ["summary_date"]
-)
 
 # ========= OUTPUT FILES =========
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -289,8 +218,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def append_csv(path, df):
     if df.empty:
         return
-    write_header = not os.path.exists(path)
-    df.to_csv(path, mode="a", header=write_header, index=False)
+    header = not os.path.exists(path)
+    df.to_csv(path, mode="a", header=header, index=False)
 
 append_csv(os.path.join(DATA_DIR, "history_weatherObs.csv"), df_wx)
 append_csv(os.path.join(DATA_DIR, "history_nfdrsObs.csv"), df_nfdrs)
@@ -302,10 +231,10 @@ df_nfdrs.to_excel(os.path.join(DATA_DIR,"fems_latest_nfdrsObs.xlsx"), index=Fals
 df_wxmm.to_excel(os.path.join(DATA_DIR,"fems_latest_wxMinMax.xlsx"), index=False)
 df_nfdrmm.to_excel(os.path.join(DATA_DIR,"fems_latest_nfdrMinMax.xlsx"), index=False)
 
-with pd.ExcelWriter(os.path.join(DATA_DIR, "fems_data.xlsx"), engine="openpyxl") as xw:
+with pd.ExcelWriter(os.path.join(DATA_DIR,"fems_data.xlsx"), engine="openpyxl") as xw:
     df_wx.to_excel(xw, sheet_name="weatherObs", index=False)
     df_nfdrs.to_excel(xw, sheet_name="nfdrsObs", index=False)
     df_wxmm.to_excel(xw, sheet_name="wxMinMax", index=False)
     df_nfdrmm.to_excel(xw, sheet_name="nfdrMinMax", index=False)
 
-print("Done. (Weather + NFDRS now match FEMS exactly.)")
+print("Done. All timestamps now match FEMS exactly.")
