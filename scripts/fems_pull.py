@@ -8,12 +8,11 @@ from requests.auth import HTTPBasicAuth
 from zoneinfo import ZoneInfo
 
 # ========= CONFIG =========
-# PROD endpoint (dashed path)
-ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
+ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
-# Basic Auth (username = FEMS account, password = FEMS API key)
+# Basic Auth
 USERNAME = os.environ["FEMS_USERNAME"]
 API_KEY  = os.environ["FEMS_API_KEY"]
 AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
@@ -24,19 +23,35 @@ HEADERS = {
     "User-Agent": "FEMS-NM-AZ-GitHubActions/1.0"
 }
 
-# ========= STATIONS =========
-stations_path   = os.path.join(DATA_DIR, "stations.csv")
-station_ids     = pd.read_csv(stations_path, header=None)[0].astype(str).tolist()
+# ========= LOAD STATION GROUPS (CLEAN FILES) =========
+nm_stations = set(pd.read_csv(os.path.join(DATA_DIR, "stations_nm.csv"), header=None)[0].astype(str))
+az_stations = set(pd.read_csv(os.path.join(DATA_DIR, "stations_az.csv"), header=None)[0].astype(str))
+
+def get_station_timezone(station_id):
+    """Return correct time zone based on station grouping."""
+    sid = str(station_id)
+    if sid in az_stations:
+        return ZoneInfo("America/Phoenix")   # AZ (no DST)
+    return ZoneInfo("America/Denver")        # NM (MDT/MST)
+
+# ========= ALL STATIONS TO QUERY FEMS =========
+# Combine NM + AZ list
+station_ids = list(nm_stations | az_stations)
 station_ids_csv = ",".join(station_ids)
 
-# ========= TIME WINDOWS (UTC) =========
-now_utc         = datetime.utcnow().replace(tzinfo=timezone.utc)
-last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-last_hour_end   = (last_hour_start + timedelta(hours=1)) - timedelta(seconds=1)
+# ========= TIME WINDOWS =========
+now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
 
-start_dt_iso    = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-end_dt_iso      = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-today_str       = now_utc.strftime("%Y-%m-%d")
+# last hour for NFDRS + hourly weather
+last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+last_hour_end   = last_hour_start + timedelta(hours=1) - timedelta(seconds=1)
+
+start_dt_iso = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+end_dt_iso   = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+today_str    = now_utc.strftime("%Y-%m-%d")
+
+# ========= ONLY RUN MinMax AT MIDNIGHT =========
+run_minmax = (now_utc.hour == 0)
 
 # ========= QUERIES =========
 Q_WEATHER_OBS = """
@@ -132,42 +147,54 @@ def gql(query, variables=None):
     return j["data"]
 
 # ========= RUN QUERIES =========
-wx  = gql(Q_WEATHER_OBS, {"startDateTimeRange": start_dt_iso,
-                          "endDateTimeRange": end_dt_iso,
-                          "stationIds": station_ids_csv})["weatherObs"]["data"]
+wx = gql(Q_WEATHER_OBS, {
+    "startDateTimeRange": start_dt_iso,
+    "endDateTimeRange": end_dt_iso,
+    "stationIds": station_ids_csv
+})["weatherObs"]["data"]
 df_wx = pd.DataFrame(wx)
 
 nfdrs_frames = []
 for fm in FUEL_MODELS:
-    nf = gql(Q_NFDRS_OBS, {"fuelModels": fm,
-                           "stationIds": station_ids_csv,
-                           "startDateRange": today_str,
-                           "endDateRange": today_str,
-                           "startHour": int(last_hour_start.strftime("%H")),
-                           "endHour": int((last_hour_start + timedelta(hours=1)).strftime("%H")),
-                           "dateTimeFormat": "UTC"})["nfdrsObs"]["data"]
+    nf = gql(Q_NFDRS_OBS, {
+        "fuelModels": fm,
+        "stationIds": station_ids_csv,
+        "startDateRange": today_str,
+        "endDateRange": today_str,
+        "startHour": int(last_hour_start.strftime("%H")),
+        "endHour": int((last_hour_start + timedelta(hours=1)).strftime("%H")),
+        "dateTimeFormat": "UTC"
+    })["nfdrsObs"]["data"]
     nfdrs_frames.append(pd.DataFrame(nf))
 df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True) if nfdrs_frames else pd.DataFrame()
 
-wxmm = gql(Q_WX_MINMAX, {"startDate": today_str,
-                         "endDate": today_str,
-                         "stationIds": station_ids_csv})["wxMinMax"]["data"]
-df_wxmm = pd.DataFrame(wxmm)
+# MinMax only at midnight
+if run_minmax:
+    wxmm = gql(Q_WX_MINMAX, {
+        "startDate": today_str,
+        "endDate": today_str,
+        "stationIds": station_ids_csv
+    })["wxMinMax"]["data"]
+    df_wxmm = pd.DataFrame(wxmm)
 
-nfdrmm_frames = []
-for fm in FUEL_MODELS:
-    nm = gql(Q_NFDR_MINMAX, {"startDate": today_str,
-                             "endDate": today_str,
-                             "stationIds": station_ids_csv,
-                             "fuelModels": fm})["nfdrMinMax"]["data"]
-    nfdrmm_frames.append(pd.DataFrame(nm))
-df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True) if nfdrmm_frames else pd.DataFrame()
+    nfdrmm_frames = []
+    for fm in FUEL_MODELS:
+        nm = gql(Q_NFDR_MINMAX, {
+            "startDate": today_str,
+            "endDate": today_str,
+            "stationIds": station_ids_csv,
+            "fuelModels": fm
+        })["nfdrMinMax"]["data"]
+        nfdrmm_frames.append(pd.DataFrame(nm))
+    df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True)
+else:
+    df_wxmm = pd.DataFrame()
+    df_nfdrmm = pd.DataFrame()
 
-# ========= SAFE DATE/TIME FORMATTERS (MDT/MST, keep bad timestamps "as is") =========
-MT = ZoneInfo("America/Denver")  # auto-handles MDT/MST by date
+# ========= SAFE DATE/TIME FORMATTERS =========
 
 def _as_is(dt_like):
-    """Return the original value as a string (for invalid/out-of-range inputs)."""
+    """Return the original timestamp string exactly as FEMS gave it."""
     if dt_like is None:
         return ""
     try:
@@ -177,110 +204,71 @@ def _as_is(dt_like):
         pass
     return str(dt_like)
 
-def _to_mt(dt_like):
-    """
-    Parse to pandas Timestamp (UTC) and convert to America/Denver.
-    Returns pd.Timestamp or NaT; never raises.
-    """
+def to_local_time(dt_like, station_id):
     ts = pd.to_datetime(dt_like, utc=True, errors="coerce")
-    if ts is pd.NaT or pd.isna(ts):
+    if ts is pd.NaT:
         return pd.NaT
+    tz = get_station_timezone(station_id)
     try:
-        return ts.tz_convert(MT)
+        return ts.tz_convert(tz)
     except Exception:
         return pd.NaT
 
-def _valid_year(ts):
-    """Accept years 1..9999 only (Python/Pandas constraint)."""
-    try:
-        y = int(ts.year)
-        return 1 <= y <= 9999
-    except Exception:
-        return False
-
-def fmt_time(dt_like):
-    """
-    If valid: 'M/D/YYYY H:MM MDT|MST'.
-    If invalid/out-of-range: return original value (as-is).
-    """
-    ts = _to_mt(dt_like)
-    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
+def fmt_time(dt_like, station_id):
+    ts = to_local_time(dt_like, station_id)
+    if ts is pd.NaT:
         return _as_is(dt_like)
-    m = ts.month
-    d = ts.day
-    y = ts.year
-    hh = ts.hour
-    mm = ts.minute
-    tz = ts.tzname() or "MT"
-    return f"{m}/{d}/{y} {hh:02d}:{mm:02d} {tz}"
+    return f"{ts.month}/{ts.day}/{ts.year} {ts.hour:02d}:{ts.minute:02d} {ts.tzname()}"
 
-def fmt_date(dt_like):
-    """
-    If valid: 'M/D/YYYY'.
-    If invalid/out-of-range: return original value (as-is).
-    """
-    ts = _to_mt(dt_like)
-    if ts is pd.NaT or pd.isna(ts) or not _valid_year(ts):
+def fmt_date(dt_like, station_id):
+    ts = to_local_time(dt_like, station_id)
+    if ts is pd.NaT:
         return _as_is(dt_like)
-    m = ts.month
-    d = ts.day
-    y = ts.year
-    return f"{m}/{d}/{y}"
+    return f"{ts.month}/{ts.day}/{ts.year}"
 
-def format_columns(df, time_cols=None, date_cols=None):
-    """Apply formatting in-place if columns exist; robust to bad values."""
-    time_cols = time_cols or []
-    date_cols = date_cols or []
-    for c in time_cols:
-        if c in df.columns:
-            df[c] = df[c].apply(fmt_time)
-    for c in date_cols:
-        if c in df.columns:
-            df[c] = df[c].apply(fmt_date)
+def apply_time_formatting(df, time_cols, date_cols):
+    if df.empty:
+        return
+    for idx, row in df.iterrows():
+        sid = row.get("station_id")
+        for c in time_cols:
+            if c in df.columns:
+                df.at[idx, c] = fmt_time(row[c], sid)
+        for c in date_cols:
+            if c in df.columns:
+                df.at[idx, c] = fmt_date(row[c], sid)
 
-# ========= APPLY FORMATTING BEFORE WRITING =========
-format_columns(
+# ========= APPLY FORMATTING =========
+apply_time_formatting(
     df_wx,
-    time_cols=[
-        "observation_time", "observation_time_lst",
-        "display_hour", "display_hour_lst",
-        "masked_observation_time"
-    ],
-    date_cols=["display_date"]
+    ["observation_time", "observation_time_lst", "display_hour",
+     "display_hour_lst", "masked_observation_time"],
+    ["display_date"]
 )
 
-format_columns(
+apply_time_formatting(
     df_nfdrs,
-    time_cols=[
-        "observation_time", "observation_time_lst",
-        "display_hour", "display_hour_lst",
-        "nfdr_time"
-    ],
-    date_cols=["nfdr_date"]
+    ["observation_time", "observation_time_lst", "display_hour",
+     "display_hour_lst", "nfdr_time"],
+    ["nfdr_date"]
 )
 
-format_columns(
+apply_time_formatting(
     df_wxmm,
-    time_cols=["peak_wind_gust_time"],
-    date_cols=["summary_date"]
+    ["peak_wind_gust_time"],
+    ["summary_date"]
 )
 
-format_columns(
+apply_time_formatting(
     df_nfdrmm,
-    time_cols=[
-        "ignition_component_max_time",
-        "spread_component_max_time",
-        "energy_release_component_max_time",
-        "burning_index_max_time",
-        "one_hr_tl_fuel_moisture_min_time",
-        "ten_hr_tl_fuel_moisture_min_time",
-        "hun_hr_tl_fuel_moisture_min_time",
-        "thou_hr_tl_fuel_moisture_min_time"
-    ],
-    date_cols=["summary_date"]
+    ["ignition_component_max_time", "spread_component_max_time",
+     "energy_release_component_max_time", "burning_index_max_time",
+     "one_hr_tl_fuel_moisture_min_time", "ten_hr_tl_fuel_moisture_min_time",
+     "hun_hr_tl_fuel_moisture_min_time", "thou_hr_tl_fuel_moisture_min_time"],
+    ["summary_date"]
 )
 
-# ========= WRITE OUTPUTS (ONLY ORIGINAL FILES) =========
+# ========= WRITE OUTPUTS =========
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
@@ -289,23 +277,23 @@ def append_csv(path, df):
     header = not os.path.exists(path)
     df.to_csv(path, mode="a", header=header, index=False)
 
-# APPEND history CSVs (grow forever)
+# Append historical files
 append_csv(os.path.join(DATA_DIR, "history_weatherObs.csv"),  df_wx)
 append_csv(os.path.join(DATA_DIR, "history_nfdrsObs.csv"),   df_nfdrs)
 append_csv(os.path.join(DATA_DIR, "history_wxMinMax.csv"),   df_wxmm)
 append_csv(os.path.join(DATA_DIR, "history_nfdrMinMax.csv"), df_nfdrmm)
 
-# OVERWRITE “latest only” Excel files (one hour snapshot)
+# Overwrite latest snapshots
 df_wx.to_excel   (os.path.join(DATA_DIR, "fems_latest_weatherObs.xlsx"),  index=False)
 df_nfdrs.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrsObs.xlsx"),    index=False)
 df_wxmm.to_excel (os.path.join(DATA_DIR, "fems_latest_wxMinMax.xlsx"),    index=False)
 df_nfdrmm.to_excel(os.path.join(DATA_DIR, "fems_latest_nfdrMinMax.xlsx"), index=False)
 
-# Combined snapshot Excel (latest hour, four sheets)
+# Combined snapshot
 with pd.ExcelWriter(os.path.join(DATA_DIR, "fems_data.xlsx"), engine="openpyxl") as xw:
     df_wx.to_excel   (xw, sheet_name="weatherObs",  index=False)
     df_nfdrs.to_excel(xw, sheet_name="nfdrsObs",    index=False)
     df_wxmm.to_excel (xw, sheet_name="wxMinMax",    index=False)
     df_nfdrmm.to_excel(xw, sheet_name="nfdrMinMax", index=False)
 
-print("Done (Prod, MT formatted).")
+print("Done (AZ/NM time applied, MinMax at midnight, bad timestamps kept).")
