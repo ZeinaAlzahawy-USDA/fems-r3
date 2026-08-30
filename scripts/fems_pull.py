@@ -11,7 +11,6 @@ ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR = "data"
 
-# Auth
 USERNAME = os.environ["FEMS_USERNAME"]
 API_KEY  = os.environ["FEMS_API_KEY"]
 AUTH     = HTTPBasicAuth(USERNAME, API_KEY)
@@ -22,18 +21,16 @@ HEADERS = {
     "User-Agent": "FEMS-NM-AZ-GitHubActions/1.0"
 }
 
-# ========= LOAD STATION LISTS (IDs only) =========
+# ========= LOAD STATION LISTS =========
 nm_stations = set(pd.read_csv(os.path.join(DATA_DIR, "stations_nm.csv"), header=None)[0].astype(str))
 az_stations = set(pd.read_csv(os.path.join(DATA_DIR, "stations_az.csv"), header=None)[0].astype(str))
 
-# Combined list for FEMS query
 station_ids = list(nm_stations | az_stations)
 station_ids_csv = ",".join(station_ids)
 
 # ========= TIME WINDOWS =========
 now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
 
-# WeatherObs uses last hour
 last_hour_start = (now_utc - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
 last_hour_end   = last_hour_start + timedelta(hours=1) - timedelta(seconds=1)
 
@@ -41,7 +38,6 @@ start_dt_iso = last_hour_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 end_dt_iso   = last_hour_end.strftime("%Y-%m-%dT%H:%M:%SZ")
 today_str    = now_utc.strftime("%Y-%m-%d")
 
-# MinMax once per day (midnight)
 run_minmax = (now_utc.hour == 0)
 
 # ========= QUERIES =========
@@ -57,7 +53,7 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
     data {
       station_id station_name wrcc_id latitude longitude elevation station_type
       observation_time observation_time_lst display_hour display_hour_lst
-      masked_observation_time display_date display_date_lst
+      masked_observation_time display_date
       temperature relative_humidity hourly_precip wind_speed wind_direction
       peak_gust_speed peak_gust_dir sol_rad snow_flag observation_type
     }
@@ -65,7 +61,6 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
 }
 """
 
-# NFDRS Obs — NO hour filtering (pulls exact observed daily record)
 Q_NFDRS_OBS = """
 query NfdrsObs(
   $fuelModels: String!, $stationIds: String,
@@ -94,7 +89,7 @@ Q_WX_MINMAX = """
 query WxMinMax($startDate: Date!, $endDate: Date, $stationIds: String) {
   wxMinMax(startDate: $startDate, endDate: $endDate, stationIds: $stationIds, hasHistoricData: ALL) {
     data {
-      station_name station_id wrcc_id latitude longitude elevation 
+      station_name station_id wrcc_id latitude longitude elevation
       summary_date summary_date_lst observation_type
       temperature_min temperature_max relative_humidity_min relative_humidity_max
       wind_speed_min wind_speed_max
@@ -128,39 +123,36 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
 """
 
 # ========= REQUEST =========
+
 def gql(query, variables=None):
     r = requests.post(
         ENDPOINT, headers=HEADERS, auth=AUTH,
         json={"query": query, "variables": variables}, timeout=90
     )
     print(f"[HTTP {r.status_code}] {ENDPOINT}")
+    data = r.json()
+    if "errors" in data:
+        raise RuntimeError(data["errors"])
+    return data["data"]
 
-    ct = r.headers.get("content-type", "")
-    j = r.json() if "application/json" in ct else {"errors": [{"message": r.text[:300]}]}
+# ========= WEATHER OBS =========
 
-    if j.get("errors"):
-        raise RuntimeError(j["errors"])
-    return j["data"]
-
-# ========= WEATHER OBSERVATIONS =========
 wx = gql(Q_WEATHER_OBS, {
     "startDateTimeRange": start_dt_iso,
     "endDateTimeRange": end_dt_iso,
     "stationIds": station_ids_csv
 })["weatherObs"]["data"]
+
 df_wx = pd.DataFrame(wx)
 
-# Replace UTC timestamps with FEMS local *_lst fields
 if "observation_time_lst" in df_wx.columns:
     df_wx["observation_time"] = df_wx["observation_time_lst"]
 
 if "display_hour_lst" in df_wx.columns:
     df_wx["display_hour"] = df_wx["display_hour_lst"]
 
-if "display_date_lst" in df_wx.columns:
-    df_wx["display_date"] = df_wx["display_date_lst"]
+# ========= NFDRS OBS (EXACT FEMS VALUES) =========
 
-# ========= NFDRS OBSERVED =========
 nfdrs_frames = []
 for fm in FUEL_MODELS:
     nf = gql(Q_NFDRS_OBS, {
@@ -172,15 +164,15 @@ for fm in FUEL_MODELS:
     })["nfdrsObs"]["data"]
     nfdrs_frames.append(pd.DataFrame(nf))
 
-df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True) if nfdrs_frames else pd.DataFrame()
+df_nfdrs = pd.concat(nfdrs_frames, ignore_index=True)
 
-# Replace with actual FEMS *_lst fields
 for col in ["observation_time", "display_hour", "nfdr_time", "nfdr_date"]:
     lst_col = col + "_lst"
     if lst_col in df_nfdrs.columns:
         df_nfdrs[col] = df_nfdrs[lst_col]
 
 # ========= MINMAX =========
+
 if run_minmax:
     wxmm = gql(Q_WX_MINMAX, {
         "startDate": today_str,
@@ -201,11 +193,10 @@ if run_minmax:
 
     df_nfdrmm = pd.concat(nfdrmm_frames, ignore_index=True)
 
-    # Use *_lst fields if available
     for df in [df_wxmm, df_nfdrmm]:
         for col in df.columns:
             if col.endswith("_lst"):
-                original = col.replace("_lst","")
+                original = col.replace("_lst", "")
                 df[original] = df[col]
 
 else:
@@ -213,6 +204,7 @@ else:
     df_nfdrmm = pd.DataFrame()
 
 # ========= OUTPUT FILES =========
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def append_csv(path, df):
