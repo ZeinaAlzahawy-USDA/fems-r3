@@ -68,7 +68,7 @@ start_dt_iso = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 end_dt_iso   = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 start_date   = window_start.strftime("%Y-%m-%d")
 end_date     = now_utc.strftime("%Y-%m-%d")
-pull_date    = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+pull_date_mst= (now_utc - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") + " MST"
 
 # ========= QUERIES =========
 Q_WEATHER_OBS = """
@@ -156,7 +156,7 @@ report("weather pull (raw)", df_wx, "observation_type")
 # Observed only: keep all non-F rows
 if not df_wx.empty:
     df_wx = df_wx[df_wx["observation_type"] != "F"].copy()
-    df_wx["pull_date"] = pull_date
+    df_wx["pull_date_mst"] = pull_date_mst
 report("weather pull (observed only)", df_wx, "observation_type")
 
 # ========= PULL: NFDR (30-day window, per fuel model) =========
@@ -181,9 +181,13 @@ report("nfdr pull (raw)", df_nfdr, "nfdr_type")
 # Observed only: keep all non-F rows
 if not df_nfdr.empty:
     df_nfdr = df_nfdr[df_nfdr["nfdr_type"] != "F"].copy()
-    df_nfdr["pull_date"] = pull_date
-
+    df_nfdr["pull_date_mst"] = pull_date_mst
+    df_nfdr = df_nfdr.drop(columns=["observation_time","display_hour], errors="ignor")
+                                    
+                                    
     # Round fire-danger numbers to match FEMS's own display
+
+    
     for col in ROUND_1_COLS:
         if col in df_nfdr.columns:
             df_nfdr[col] = pd.to_numeric(df_nfdr[col], errors="coerce").round(1)
@@ -225,6 +229,7 @@ def sync_history(path, df_new, time_col):
     print(f"{os.path.basename(path)}: total rows now {len(combined)}")
 
 sync_history(WX_OUT, df_wx, "observation_time")
-sync_history(NFDR_OUT, df_nfdr, "observation_time")
+sync_history(NFDR_OUT, df_nfdr, "observation_time_lst")
+
 
 print("Done: obs_hourly.")
