@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from requests.auth import HTTPBasicAuth
 
 # ========= CONFIG =========
@@ -71,6 +72,10 @@ end_date     = now_utc.strftime("%Y-%m-%d")
 
 # pull_date_mst: when this run happened, in Arizona/Mountain Standard Time (no daylight saving)
 pull_date_mst = (now_utc - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+# Naive local-time versions of the window cutoffs, used once we switch to local date/time columns
+window_start_local = (window_start - timedelta(hours=7)).replace(tzinfo=None)
+cutoff_1yr_local    = (cutoff_1yr - timedelta(hours=7)).replace(tzinfo=None)
 
 # ========= QUERIES =========
 Q_WEATHER_OBS = """
@@ -143,6 +148,26 @@ def report(label, df, type_col):
     if not df.empty and type_col in df.columns:
         print(f"{type_col} distribution:\n{df[type_col].value_counts(dropna=False)}")
 
+# ========= CLEAN DATE/TIME SPLIT =========
+# Turns an ugly ISO local-time column (e.g. 2026-09-05T13:32:00.000-07:00)
+# into two clean columns: a date (month/day/year) and a time (MST, HH:MM:SS)
+def split_lst_column(df, lst_col, date_col, mst_col):
+    if lst_col in df.columns:
+        dt = pd.to_datetime(df[lst_col], errors="coerce")
+        df[date_col] = dt.dt.strftime("%-m/%-d/%Y")
+        df[mst_col] = dt.dt.strftime("%H:%M:%S")
+        df = df.drop(columns=[lst_col])
+    return df
+
+# ========= ROUNDING (matches how FEMS itself rounds, not Python's binary-float rounding) =========
+# Python's round(9.45, 1) gives 9.4 because 9.45 can't be stored exactly in binary.
+# Going through Decimal(str(x)) preserves the value as typed/returned by FEMS, so .45 rounds up to .5 as expected.
+def round_half_up(x, decimals):
+    if pd.isna(x):
+        return x
+    quantum = Decimal(1).scaleb(-decimals)
+    return float(Decimal(str(x)).quantize(quantum, rounding=ROUND_HALF_UP))
+
 # ========= PULL: WEATHER (30-day window) =========
 wx = gql(
     Q_WEATHER_OBS,
@@ -160,8 +185,14 @@ if not df_wx.empty:
     df_wx = df_wx[df_wx["observation_type"] != "F"].copy()
     df_wx["pull_date_mst"] = pull_date_mst
 
-    # Drop UTC time columns; keep only local-time (_lst) versions, matching FEMS's own display
-    df_wx = df_wx.drop(columns=["observation_time", "display_hour"], errors="ignore")
+    # Drop UTC time columns and unwanted weather-only fields
+    # (display_date is dropped here because FEMS's raw version gets replaced by our clean one below)
+    df_wx = df_wx.drop(columns=["observation_time", "display_hour",
+                                 "masked_observation_time", "display_date"], errors="ignore")
+
+    # Split local-time columns into clean date + time columns
+    df_wx = split_lst_column(df_wx, "observation_time_lst", "observation_date", "observation_time_mst")
+    df_wx = split_lst_column(df_wx, "display_hour_lst", "display_date", "display_hour_mst")
 report("weather pull (observed only)", df_wx, "observation_type")
 
 # ========= PULL: NFDR (30-day window, per fuel model) =========
@@ -191,13 +222,17 @@ if not df_nfdr.empty:
     # Drop UTC time columns; keep only local-time (_lst) versions, matching FEMS's own display
     df_nfdr = df_nfdr.drop(columns=["observation_time", "display_hour"], errors="ignore")
 
+    # Split local-time columns into clean date + time columns
+    df_nfdr = split_lst_column(df_nfdr, "observation_time_lst", "observation_date", "observation_time_mst")
+    df_nfdr = split_lst_column(df_nfdr, "display_hour_lst", "display_date", "display_hour_mst")
+
     # Round fire-danger numbers to match FEMS's own display
     for col in ROUND_1_COLS:
         if col in df_nfdr.columns:
-            df_nfdr[col] = pd.to_numeric(df_nfdr[col], errors="coerce").round(1)
+            df_nfdr[col] = pd.to_numeric(df_nfdr[col], errors="coerce").apply(lambda x: round_half_up(x, 1))
     for col in ROUND_2_COLS:
         if col in df_nfdr.columns:
-            df_nfdr[col] = pd.to_numeric(df_nfdr[col], errors="coerce").round(2)
+            df_nfdr[col] = pd.to_numeric(df_nfdr[col], errors="coerce").apply(lambda x: round_half_up(x, 2))
 
     # Clean column names to match FEMS's table headers
     df_nfdr = df_nfdr.rename(columns=NFDR_RENAME)
@@ -206,7 +241,7 @@ report("nfdr pull (observed only)", df_nfdr, "nfdr_type")
 # ========= SYNC LOGIC =========
 # Drop stored rows inside the re-check window, insert fresh pull, keep older rows.
 # Then trim anything older than 1 year.
-def sync_history(path, df_new, time_col):
+def sync_history(path, df_new, date_col, time_col):
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if os.path.exists(path):
@@ -214,9 +249,17 @@ def sync_history(path, df_new, time_col):
     else:
         df_old = pd.DataFrame()
 
+    def build_dt(df):
+        if df.empty or date_col not in df.columns or time_col not in df.columns:
+            return pd.Series([pd.NaT] * len(df), index=df.index)
+        return pd.to_datetime(
+            df[date_col].astype(str) + " " + df[time_col].astype(str),
+            errors="coerce"
+        )
+
     if not df_old.empty:
-        old_times = pd.to_datetime(df_old[time_col], errors="coerce", utc=True)
-        keep_old  = df_old[(old_times < window_start) & (old_times >= cutoff_1yr)]
+        old_times = build_dt(df_old)
+        keep_old  = df_old[(old_times < window_start_local) & (old_times >= cutoff_1yr_local)]
         print(f"{os.path.basename(path)}: kept {len(keep_old)} rows outside window, "
               f"replaced {len(df_old) - len(keep_old)} rows inside window/expired")
     else:
@@ -226,13 +269,13 @@ def sync_history(path, df_new, time_col):
     combined = pd.concat([keep_old, df_new], ignore_index=True)
 
     if not combined.empty:
-        sort_times = pd.to_datetime(combined[time_col], errors="coerce", utc=True)
+        sort_times = build_dt(combined)
         combined = combined.assign(_sort=sort_times).sort_values("_sort").drop(columns="_sort")
 
     combined.to_csv(path, index=False)
     print(f"{os.path.basename(path)}: total rows now {len(combined)}")
 
-sync_history(WX_OUT, df_wx, "observation_time_lst")
-sync_history(NFDR_OUT, df_nfdr, "observation_time_lst")
+sync_history(WX_OUT, df_wx, "observation_date", "observation_time_mst")
+sync_history(NFDR_OUT, df_nfdr, "observation_date", "observation_time_mst")
 
 print("Done: obs_hourly.")
