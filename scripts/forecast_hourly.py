@@ -12,7 +12,7 @@ FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR    = "data"
 
 RETENTION_DAYS = 30   # keep the last 30 days' worth of PULLS (not 30 days of forecast dates)
-FORECAST_DAYS  = 6    # today + 6 more days = 7 days total
+FORECAST_DAYS  = 7    # 7 strictly-future days (tomorrow through tomorrow+6)
 
 # NFDR fire-danger columns: round to match FEMS's own display (1 decimal, GSI keeps 2)
 ROUND_1_COLS = [
@@ -62,22 +62,24 @@ station_ids     = load_stations("stations_az.csv") + load_stations("stations_nm.
 station_ids_csv = ",".join(station_ids)
 
 # ========= TIME WINDOW =========
-# "Today" is anchored to Arizona/Mountain time (no daylight saving), since that's
-# the fire planner's frame of reference for what "today" and "the next 7 days" mean.
+# "Future" is anchored to Arizona/Mountain time (no daylight saving) and starts
+# tomorrow, not today — 7 full future days: tomorrow through tomorrow+6.
+# If FEMS's forecast horizon only reaches 6 of those days, the 7th just comes
+# back with no rows for it — nothing extra needed to handle that gracefully.
 now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
 now_mst = now_utc - timedelta(hours=7)
 today_mst_date = now_mst.date()
+tomorrow_mst_date = today_mst_date + timedelta(days=1)
 
-# MST midnight today == 07:00 UTC today; window runs through day+6, i.e. up to (but not
-# including) MST midnight on day+7.
-window_start_utc = datetime(today_mst_date.year, today_mst_date.month, today_mst_date.day,
+# MST midnight tomorrow == 07:00 UTC tomorrow; window runs 7 full days from there.
+window_start_utc = datetime(tomorrow_mst_date.year, tomorrow_mst_date.month, tomorrow_mst_date.day,
                              7, 0, 0, tzinfo=timezone.utc)
-window_end_utc = window_start_utc + timedelta(days=FORECAST_DAYS + 1) - timedelta(seconds=1)
+window_end_utc = window_start_utc + timedelta(days=FORECAST_DAYS) - timedelta(seconds=1)
 
 start_dt_iso = window_start_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 end_dt_iso   = window_end_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-start_date   = today_mst_date.strftime("%Y-%m-%d")
-end_date     = (today_mst_date + timedelta(days=FORECAST_DAYS)).strftime("%Y-%m-%d")
+start_date   = tomorrow_mst_date.strftime("%Y-%m-%d")
+end_date     = (tomorrow_mst_date + timedelta(days=FORECAST_DAYS - 1)).strftime("%Y-%m-%d")
 
 # pull_date_mst: when this run happened, in Arizona/Mountain Standard Time
 pull_date_mst = now_mst.strftime("%Y-%m-%d %H:%M:%S")
