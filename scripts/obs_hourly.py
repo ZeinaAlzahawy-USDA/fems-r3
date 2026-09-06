@@ -1,4 +1,5 @@
 import os
+import math
 import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
@@ -88,10 +89,12 @@ query WeatherObs($startDateTimeRange: DateTime!, $endDateTimeRange: DateTime!, $
   ) {
     data {
       station_id wrcc_id station_name latitude longitude elevation station_type
+      zoom_level hex
       observation_time observation_time_lst display_hour display_hour_lst
       masked_observation_time display_date
       temperature relative_humidity hourly_precip wind_speed wind_direction
       peak_gust_speed peak_gust_dir sol_rad snow_flag observation_type
+      t_flag rh_flag pcp_flag ws_flag wa_flag sr_flag gs_flag ga_flag
     }
   }
 }
@@ -168,6 +171,17 @@ def round_half_up(x, decimals):
     quantum = Decimal(1).scaleb(-decimals)
     return float(Decimal(str(x)).quantize(quantum, rounding=ROUND_HALF_UP))
 
+# ========= VPD (Vapor Pressure Deficit) — FEMS doesn't expose this as an API field,
+# so we calculate it ourselves from temperature (F) and relative humidity (%).
+# Result is in Pa, rounded to the nearest whole number to match FEMS's own display.
+def calc_vpd_pa(temp_f, rh_pct):
+    if pd.isna(temp_f) or pd.isna(rh_pct):
+        return None
+    temp_c = (float(temp_f) - 32) * 5 / 9
+    svp_kpa = 0.6108 * math.exp((17.27 * temp_c) / (temp_c + 237.3))
+    vpd_kpa = svp_kpa * (1 - float(rh_pct) / 100)
+    return round_half_up(vpd_kpa * 1000, 0)
+
 # ========= PULL: WEATHER (30-day window) =========
 wx = gql(
     Q_WEATHER_OBS,
@@ -183,7 +197,10 @@ report("weather pull (raw)", df_wx, "observation_type")
 # Observed only: keep all non-F rows
 if not df_wx.empty:
     df_wx = df_wx[df_wx["observation_type"] != "F"].copy()
-    df_wx["pull_date_mst"] = pull_date_mst
+    df_wx["Pull_date_mst"] = pull_date_mst
+
+    # Calculate VPD from temperature + relative humidity (not an available FEMS field)
+    df_wx["vpd"] = df_wx.apply(lambda r: calc_vpd_pa(r.get("temperature"), r.get("relative_humidity")), axis=1)
 
     # Drop UTC time columns and unwanted weather-only fields
     # (display_date is dropped here because FEMS's raw version gets replaced by our clean one below)
@@ -191,8 +208,8 @@ if not df_wx.empty:
                                  "masked_observation_time", "display_date"], errors="ignore")
 
     # Split local-time columns into clean date + time columns
-    df_wx = split_lst_column(df_wx, "observation_time_lst", "observation_date", "observation_time_mst")
-    df_wx = split_lst_column(df_wx, "display_hour_lst", "display_date", "display_hour_mst")
+    df_wx = split_lst_column(df_wx, "observation_time_lst", "observation_date_lst", "observation_time_lst_mst")
+    df_wx = split_lst_column(df_wx, "display_hour_lst", "display_date", "display_hour_lst_mst")
 report("weather pull (observed only)", df_wx, "observation_type")
 
 # ========= PULL: NFDR (30-day window, per fuel model) =========
@@ -217,14 +234,14 @@ report("nfdr pull (raw)", df_nfdr, "nfdr_type")
 # Observed only: keep all non-F rows
 if not df_nfdr.empty:
     df_nfdr = df_nfdr[df_nfdr["nfdr_type"] != "F"].copy()
-    df_nfdr["pull_date_mst"] = pull_date_mst
+    df_nfdr["Pull_date_mst"] = pull_date_mst
 
     # Drop UTC time columns; keep only local-time (_lst) versions, matching FEMS's own display
     df_nfdr = df_nfdr.drop(columns=["observation_time", "display_hour"], errors="ignore")
 
     # Split local-time columns into clean date + time columns
-    df_nfdr = split_lst_column(df_nfdr, "observation_time_lst", "observation_date", "observation_time_mst")
-    df_nfdr = split_lst_column(df_nfdr, "display_hour_lst", "display_date", "display_hour_mst")
+    df_nfdr = split_lst_column(df_nfdr, "observation_time_lst", "observation_date_lst", "observation_time_lst_mst")
+    df_nfdr = split_lst_column(df_nfdr, "display_hour_lst", "display_date", "display_hour_lst_mst")
 
     # Round fire-danger numbers to match FEMS's own display
     for col in ROUND_1_COLS:
@@ -275,7 +292,7 @@ def sync_history(path, df_new, date_col, time_col):
     combined.to_csv(path, index=False)
     print(f"{os.path.basename(path)}: total rows now {len(combined)}")
 
-sync_history(WX_OUT, df_wx, "observation_date", "observation_time_mst")
-sync_history(NFDR_OUT, df_nfdr, "observation_date", "observation_time_mst")
+sync_history(WX_OUT, df_wx, "observation_date_lst", "observation_time_lst_mst")
+sync_history(NFDR_OUT, df_nfdr, "observation_date_lst", "observation_time_lst_mst")
 
 print("Done: obs_hourly.")
