@@ -35,6 +35,7 @@ jobs:
         run: |
           gh release download obs-history -p history_daily_weatherminmax.csv -D data || echo "history_daily_weatherminmax.csv not in release yet (first run)"
           gh release download obs-history -p history_daily_nfdrminmax.csv -D data || echo "history_daily_nfdrminmax.csv not in release yet (first run)"
+          gh release download obs-history -p history_hourly_weather.csv -D data || echo "history_hourly_weather.csv not available yet — Max/Min VPD will be blank this run"
 
       - name: Run obs daily minmax pull
         env:
