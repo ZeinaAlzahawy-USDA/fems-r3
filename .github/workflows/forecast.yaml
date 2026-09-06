@@ -35,6 +35,8 @@ jobs:
         run: |
           gh release download forecast-data -p 30days_forecast_hourly_weather.csv -D data || echo "30days_forecast_hourly_weather.csv not in release yet (first run)"
           gh release download forecast-data -p 30days_forecast_hourly_nfdr.csv -D data || echo "30days_forecast_hourly_nfdr.csv not in release yet (first run)"
+          gh release download forecast-data -p history_forecast_daily_weather.csv -D data || echo "history_forecast_daily_weather.csv not in release yet (first run)"
+          gh release download forecast-data -p history_forecast_daily_nfdr.csv -D data || echo "history_forecast_daily_nfdr.csv not in release yet (first run)"
 
       - name: Run forecast hourly pull
         env:
@@ -42,8 +44,12 @@ jobs:
           FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
         run: python scripts/forecast_hourly.py
 
-      # forecast_daily.py step will be added here once that script is built
+      - name: Run forecast daily pull
+        env:
+          FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+          FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+        run: python scripts/forecast_daily.py
 
       - name: Upload forecast files to release
         run: |
-          gh release upload forecast-data data/30days_forecast_hourly_weather.csv data/30days_forecast_hourly_nfdr.csv --clobber
+          gh release upload forecast-data data/30days_forecast_hourly_weather.csv data/30days_forecast_hourly_nfdr.csv data/history_forecast_daily_weather.csv data/history_forecast_daily_nfdr.csv --clobber
