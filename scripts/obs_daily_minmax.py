@@ -1,5 +1,4 @@
 import os
-import math
 import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
@@ -16,6 +15,7 @@ RETENTION_DAYS = 365   # keep 1 year of history
 
 WX_OUT   = os.path.join(DATA_DIR, "history_daily_weatherminmax.csv")
 NFDR_OUT = os.path.join(DATA_DIR, "history_daily_nfdrminmax.csv")
+HOURLY_WX_IN = os.path.join(DATA_DIR, "history_hourly_weather.csv")  # read-only source for real daily VPD
 
 # NFDR fire-danger columns: round to match FEMS's own display (1 decimal, GSI keeps 2)
 ROUND_1_COLS = [
@@ -176,19 +176,29 @@ def round_half_up(x, decimals):
     quantum = Decimal(1).scaleb(-decimals)
     return float(Decimal(str(x)).quantize(quantum, rounding=ROUND_HALF_UP))
 
-# ========= VPD (Vapor Pressure Deficit) — FEMS doesn't expose this as an API field,
-# so we calculate it ourselves from temperature (F) and relative humidity (%).
-# Result is in Pa, rounded to the nearest whole number to match FEMS's own display.
-# Daily Max/Min VPD use the standard fire-weather approximation: max temp typically
-# coincides with min RH (afternoon) and min temp with max RH (overnight) — this is
-# not a true hour-by-hour calculation, just the same shortcut most fire tools use.
-def calc_vpd_pa(temp_f, rh_pct):
-    if pd.isna(temp_f) or pd.isna(rh_pct):
-        return None
-    temp_c = (float(temp_f) - 32) * 5 / 9
-    svp_kpa = 0.6108 * math.exp((17.27 * temp_c) / (temp_c + 237.3))
-    vpd_kpa = svp_kpa * (1 - float(rh_pct) / 100)
-    return round_half_up(vpd_kpa * 1000, 0)
+# ========= VPD (Vapor Pressure Deficit) — FEMS doesn't expose this as an API field.
+# Our first attempt approximated daily Max/Min VPD by pairing the day's temp extreme
+# with the day's RH extreme — that turned out inaccurate (off by up to 16% against
+# FEMS's real numbers), because the hottest hour and driest hour don't always coincide.
+# The accurate method: the hourly weather report already calculates VPD for every
+# single hour and keeps a full year of it. So instead of re-pulling hourly data here,
+# we read that file, group it by station + day, and take the real max/min — this is
+# the same hour-by-hour method FEMS itself uses.
+def compute_daily_vpd_from_hourly(hourly_path):
+    empty = pd.DataFrame(columns=["station_id", "_date_key", "Max VPD", "Min VPD"])
+    if not os.path.exists(hourly_path):
+        print(f"{os.path.basename(hourly_path)} not found — Max/Min VPD will be blank this run")
+        return empty
+
+    df_h = pd.read_csv(hourly_path, dtype=str)
+    if df_h.empty or "vpd" not in df_h.columns or "observation_date_lst" not in df_h.columns:
+        print("Hourly weather file missing vpd or observation_date_lst — Max/Min VPD will be blank this run")
+        return empty
+
+    df_h["vpd"] = pd.to_numeric(df_h["vpd"], errors="coerce")
+    df_h["_date_key"] = pd.to_datetime(df_h["observation_date_lst"], errors="coerce").dt.date
+    grouped = df_h.groupby(["station_id", "_date_key"])["vpd"].agg(["max", "min"]).reset_index()
+    return grouped.rename(columns={"max": "Max VPD", "min": "Min VPD"})
 
 # ========= CLEAN TIME COLUMNS =========
 # FEMS's Max/Min "_time" fields turn out to be a bare hour number (e.g. 16, 18, 17) —
@@ -244,12 +254,12 @@ if not df_wx.empty:
     df_wx = df_wx[df_wx["observation_type"] != "F"].copy()
     df_wx["Pull_date_mst"] = pull_date_mst
 
-    # Max VPD: day's max temp + day's min RH (typically both happen in the afternoon)
-    df_wx["Max VPD"] = df_wx.apply(
-        lambda r: calc_vpd_pa(r.get("temperature_max"), r.get("relative_humidity_min")), axis=1)
-    # Min VPD: day's min temp + day's max RH (typically both happen overnight)
-    df_wx["Min VPD"] = df_wx.apply(
-        lambda r: calc_vpd_pa(r.get("temperature_min"), r.get("relative_humidity_max")), axis=1)
+    # Max/Min VPD: merged in from the real hourly-derived daily extremes
+    daily_vpd = compute_daily_vpd_from_hourly(HOURLY_WX_IN)
+    df_wx["station_id"] = df_wx["station_id"].astype(str)
+    df_wx["_date_key"] = pd.to_datetime(df_wx["summary_date"], errors="coerce").dt.date
+    df_wx = df_wx.merge(daily_vpd, on=["station_id", "_date_key"], how="left")
+    df_wx = df_wx.drop(columns=["_date_key"], errors="ignore")
 
     df_wx = clean_time_column(df_wx, "peak_wind_gust_time")
     df_wx = df_wx.rename(columns=WX_RENAME)
