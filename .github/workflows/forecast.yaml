@@ -1,0 +1,49 @@
+name: FEMS Forecast Pull (NM+AZ)
+
+on:
+  workflow_dispatch:        # optional manual run
+  repository_dispatch:
+    types: [forecast-pull]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fems-data
+  cancel-in-progress: false
+
+jobs:
+  forecast-pull:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas python-dateutil
+
+      - name: Download existing forecast files from release
+        run: |
+          gh release download forecast-data -p 30days_forecast_hourly_weather.csv -D data || echo "30days_forecast_hourly_weather.csv not in release yet (first run)"
+          gh release download forecast-data -p 30days_forecast_hourly_nfdr.csv -D data || echo "30days_forecast_hourly_nfdr.csv not in release yet (first run)"
+
+      - name: Run forecast hourly pull
+        env:
+          FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+          FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+        run: python scripts/forecast_hourly.py
+
+      # forecast_daily.py step will be added here once that script is built
+
+      - name: Upload forecast files to release
+        run: |
+          gh release upload forecast-data data/30days_forecast_hourly_weather.csv data/30days_forecast_hourly_nfdr.csv --clobber
