@@ -173,14 +173,16 @@ def round_half_up(x, decimals):
 
 # ========= VPD (Vapor Pressure Deficit) — FEMS doesn't expose this as an API field,
 # so we calculate it ourselves from temperature (F) and relative humidity (%).
-# Result is in Pa, rounded to the nearest whole number to match FEMS's own display.
+# Result is in Pa. FEMS truncates the decimal rather than rounding it (confirmed by
+# comparing real values — our rounding was always exactly 1 Pa too high), so we
+# truncate here too, to match their display exactly.
 def calc_vpd_pa(temp_f, rh_pct):
     if pd.isna(temp_f) or pd.isna(rh_pct):
         return None
     temp_c = (float(temp_f) - 32) * 5 / 9
     svp_kpa = 0.6108 * math.exp((17.27 * temp_c) / (temp_c + 237.3))
     vpd_kpa = svp_kpa * (1 - float(rh_pct) / 100)
-    return round_half_up(vpd_kpa * 1000, 0)
+    return math.floor(vpd_kpa * 1000)
 
 # ========= PULL: WEATHER (30-day window) =========
 wx = gql(
