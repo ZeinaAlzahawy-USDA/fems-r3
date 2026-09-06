@@ -191,17 +191,44 @@ def calc_vpd_pa(temp_f, rh_pct):
     return round_half_up(vpd_kpa * 1000, 0)
 
 # ========= CLEAN TIME COLUMNS =========
-# FEMS returns each Max/Min "_time" field as a full ISO timestamp
-# (2026-09-05T17:00:00.000-07:00) even though the date always matches summary_date.
-# Strip it down to just the clock time (17:00:00) to match FEMS's own display.
-# If a value doesn't match that expected shape, keep the original raw text instead
-# of blanking it — protects real data and shows us the true format if it differs.
+# FEMS's Max/Min "_time" fields turn out to be a bare hour number (e.g. 16, 18, 17) —
+# not a full timestamp like the hourly report's fields. Format that as "16:00" to
+# match FEMS's own display (they show "76.6/16:00" — hour precision, no minutes).
+# Anything that doesn't look like a bare hour or a parseable time is kept as-is,
+# so we never silently blank real data.
 def clean_time_column(df, col):
-    if col in df.columns:
-        original = df[col]
-        dt = pd.to_datetime(original, errors="coerce")
-        cleaned = dt.dt.strftime("%H:%M:%S")
-        df[col] = cleaned.where(dt.notna(), original)
+    if col not in df.columns:
+        return df
+
+    def format_one(val):
+        if pd.isna(val) or str(val).strip() == "":
+            return val
+        s = str(val).strip()
+
+        # Bare hour number: "16", "16.0", 16 -> "16:00"
+        try:
+            hour = int(float(s))
+            if 0 <= hour <= 23:
+                return f"{hour:02d}:00"
+        except (ValueError, TypeError):
+            pass
+
+        # Military-style time with no separator: "1730" -> "17:30", "930" -> "09:30"
+        # (checked before the generic parser below, which would misread "1730" as the year 1730)
+        if s.isdigit() and len(s) in (3, 4):
+            hh, mm = int(s[:-2]), int(s[-2:])
+            if 0 <= hh <= 23 and 0 <= mm <= 59:
+                return f"{hh:02d}:{mm:02d}"
+
+        # Fallback: a full/partial timestamp, in case FEMS ever sends one
+        dt = pd.to_datetime(s, errors="coerce")
+        if pd.notna(dt):
+            return dt.strftime("%H:%M:%S")
+
+        # Unrecognized shape — keep the original text rather than lose it
+        return s
+
+    df[col] = df[col].apply(format_one)
     return df
 
 # ========= PULL: WEATHER MINMAX (60-day window) =========
