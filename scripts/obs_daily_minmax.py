@@ -194,10 +194,14 @@ def calc_vpd_pa(temp_f, rh_pct):
 # FEMS returns each Max/Min "_time" field as a full ISO timestamp
 # (2026-09-05T17:00:00.000-07:00) even though the date always matches summary_date.
 # Strip it down to just the clock time (17:00:00) to match FEMS's own display.
+# If a value doesn't match that expected shape, keep the original raw text instead
+# of blanking it — protects real data and shows us the true format if it differs.
 def clean_time_column(df, col):
     if col in df.columns:
-        dt = pd.to_datetime(df[col], errors="coerce")
-        df[col] = dt.dt.strftime("%H:%M:%S")
+        original = df[col]
+        dt = pd.to_datetime(original, errors="coerce")
+        cleaned = dt.dt.strftime("%H:%M:%S")
+        df[col] = cleaned.where(dt.notna(), original)
     return df
 
 # ========= PULL: WEATHER MINMAX (60-day window) =========
