@@ -1,4 +1,5 @@
 import os
+import math
 import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
@@ -6,10 +7,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from requests.auth import HTTPBasicAuth
 
 # ========= CONFIG =========
-ENDPOINT      = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
-FUEL_MODELS   = ["V", "W", "X", "Y", "Z"]
-DATA_DIR      = "data"
-FORECAST_DAYS = 7   # today + 6 more days = 7 days total
+ENDPOINT         = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
+FUEL_MODELS      = ["V", "W", "X", "Y", "Z"]
+DATA_DIR         = "data"
+WX_FORECAST_DAYS   = 8   # today + 7 more days = 8 days total
+NFDR_FORECAST_DAYS = 7   # today + 6 more days = 7 days total
 
 WX_OUT   = os.path.join(DATA_DIR, "history_forecast_daily_weather.csv")
 NFDR_OUT = os.path.join(DATA_DIR, "history_forecast_daily_nfdr.csv")
@@ -87,13 +89,16 @@ station_ids     = load_stations("stations_az.csv") + load_stations("stations_nm.
 station_ids_csv = ",".join(station_ids)
 
 # ========= TIME WINDOW =========
-# Anchored to Arizona/Mountain time (no daylight saving) — matches forecast_hourly.py's window exactly.
+# Anchored to Arizona/Mountain time (no daylight saving), starting today.
+# Weather and nfdr use different day-counts, so each gets its own end date.
 now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
 now_mst = now_utc - timedelta(hours=7)
 today_mst_date = now_mst.date()
 
-start_date = today_mst_date.strftime("%Y-%m-%d")
-end_date   = (today_mst_date + timedelta(days=FORECAST_DAYS - 1)).strftime("%Y-%m-%d")
+wx_start_date   = today_mst_date.strftime("%Y-%m-%d")
+wx_end_date     = (today_mst_date + timedelta(days=WX_FORECAST_DAYS - 1)).strftime("%Y-%m-%d")
+nfdr_start_date = today_mst_date.strftime("%Y-%m-%d")
+nfdr_end_date   = (today_mst_date + timedelta(days=NFDR_FORECAST_DAYS - 1)).strftime("%Y-%m-%d")
 
 # pull_date_mst: when this run happened, in Arizona/Mountain Standard Time
 pull_date_mst = now_mst.strftime("%Y-%m-%d %H:%M:%S")
@@ -200,6 +205,21 @@ def compute_daily_vpd_from_hourly(hourly_path, today_date):
     grouped = df_h.groupby(["station_id", "_date_key"])["vpd"].agg(["max", "min"]).reset_index()
     return grouped.rename(columns={"max": "Max VPD", "min": "Min VPD"})
 
+# ========= VPD FALLBACK FOR TODAY =========
+# forecast_hourly.py starts tomorrow, so it never has data for today — meaning
+# compute_daily_vpd_from_hourly() above can never fill in today's row. Rather than
+# leave today blank, fall back to the daily-extremes approximation (pairing the
+# day's max temp with min RH, and vice versa) for today only. Every other day
+# (tomorrow through the end of the window) still uses the accurate hourly-derived
+# value above — this fallback only fires where that's genuinely unavailable.
+def calc_vpd_pa_approx(temp_f, rh_pct):
+    if pd.isna(temp_f) or pd.isna(rh_pct):
+        return None
+    temp_c = (float(temp_f) - 32) * 5 / 9
+    svp_kpa = 0.6108 * math.exp((17.27 * temp_c) / (temp_c + 237.3))
+    vpd_kpa = svp_kpa * (1 - float(rh_pct) / 100)
+    return math.floor(vpd_kpa * 1000)
+
 # ========= CLEAN TIME COLUMNS =========
 # FEMS's Max/Min "_time" fields are a bare hour number (e.g. 16, 18, 17), not a full
 # timestamp. Format that as "16:00" to match FEMS's own display. Anything that
@@ -234,10 +254,10 @@ def clean_time_column(df, col):
     df[col] = df[col].apply(format_one)
     return df
 
-# ========= PULL: WEATHER MINMAX (7 future days) =========
+# ========= PULL: WEATHER MINMAX (8 future days) =========
 wxmm = gql(
     Q_WX_MINMAX,
-    {"startDate": start_date, "endDate": end_date, "stationIds": station_ids_csv}
+    {"startDate": wx_start_date, "endDate": wx_end_date, "stationIds": station_ids_csv}
 )["wxMinMax"]["data"]
 df_wx = pd.DataFrame(wxmm)
 report("weather minmax pull (raw)", df_wx, "observation_type")
@@ -254,6 +274,15 @@ if not df_wx.empty:
     df_wx = df_wx.merge(daily_vpd, on=["station_id", "_date_key"], how="left")
     df_wx = df_wx.drop(columns=["_date_key"], errors="ignore")
 
+    # Fill in today's row (the one date the accurate method above can never cover)
+    # using the daily-extremes approximation instead of leaving it blank
+    missing_max = df_wx["Max VPD"].isna()
+    missing_min = df_wx["Min VPD"].isna()
+    df_wx.loc[missing_max, "Max VPD"] = df_wx.loc[missing_max].apply(
+        lambda r: calc_vpd_pa_approx(r.get("temperature_max"), r.get("relative_humidity_min")), axis=1)
+    df_wx.loc[missing_min, "Min VPD"] = df_wx.loc[missing_min].apply(
+        lambda r: calc_vpd_pa_approx(r.get("temperature_min"), r.get("relative_humidity_max")), axis=1)
+
     df_wx = clean_time_column(df_wx, "peak_wind_gust_time")
     df_wx = df_wx.rename(columns=WX_RENAME)
 report("weather minmax pull (forecast only)", df_wx, "observation_type")
@@ -263,7 +292,7 @@ nfdr_frames = []
 for fm in FUEL_MODELS:
     nm = gql(
         Q_NFDR_MINMAX,
-        {"startDate": start_date, "endDate": end_date, "stationIds": station_ids_csv, "fuelModels": fm}
+        {"startDate": nfdr_start_date, "endDate": nfdr_end_date, "stationIds": station_ids_csv, "fuelModels": fm}
     )["nfdrMinMax"]["data"]
     print(f"fuel model {fm}: {len(nm)} rows")
     nfdr_frames.append(pd.DataFrame(nm))
