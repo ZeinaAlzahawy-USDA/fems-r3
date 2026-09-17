@@ -71,8 +71,9 @@ end_dt_iso   = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 start_date   = window_start.strftime("%Y-%m-%d")
 end_date     = now_utc.strftime("%Y-%m-%d")
 
-# pull_date_mst: when this run happened, in Arizona/Mountain Standard Time (no daylight saving)
-pull_date_mst = (now_utc - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+# pull_date: when this run happened in Arizona/Mountain Standard Time (no daylight saving),
+# displayed in the same timestamp layout as the FEMS masked_observation_time field
+pull_date = (now_utc - timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 # ========= QUERIES =========
 Q_WEATHER_OBS = """
@@ -184,7 +185,7 @@ report("weather pull (raw)", df_wx, "observation_type")
 # Observed only: keep all non-F rows
 if not df_wx.empty:
     df_wx = df_wx[df_wx["observation_type"] != "F"].copy()
-    df_wx["Pull_date_mst"] = pull_date_mst
+    df_wx["pull_date"] = pull_date
 
     # Calculate VPD from temperature + relative humidity (not an available FEMS field)
     df_wx["vpd"] = df_wx.apply(lambda r: calc_vpd_pa(r.get("temperature"), r.get("relative_humidity")), axis=1)
@@ -212,7 +213,7 @@ report("nfdr pull (raw)", df_nfdr, "nfdr_type")
 # Observed only: keep all non-F rows
 if not df_nfdr.empty:
     df_nfdr = df_nfdr[df_nfdr["nfdr_type"] != "F"].copy()
-    df_nfdr["Pull_date_mst"] = pull_date_mst
+    df_nfdr["pull_date"] = pull_date
 
     # Round fire-danger numbers to match FEMS's own display
     for col in ROUND_1_COLS:
@@ -234,6 +235,16 @@ def sync_history(path, df_new, timestamp_col):
 
     if os.path.exists(path):
         df_old = pd.read_csv(path, dtype=str)
+
+        # Migrate the former MST pull timestamp to the new name and display layout.
+        if "Pull_date_mst" in df_old.columns:
+            old_pull_mst = pd.to_datetime(df_old["Pull_date_mst"], errors="coerce")
+            migrated_pull_date = old_pull_mst.dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            if "pull_date" in df_old.columns:
+                df_old["pull_date"] = df_old["pull_date"].fillna(migrated_pull_date)
+            else:
+                df_old["pull_date"] = migrated_pull_date
+            df_old = df_old.drop(columns=["Pull_date_mst"])
     else:
         df_old = pd.DataFrame()
 
