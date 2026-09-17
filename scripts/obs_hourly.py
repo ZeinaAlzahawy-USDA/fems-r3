@@ -71,9 +71,9 @@ end_dt_iso   = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 start_date   = window_start.strftime("%Y-%m-%d")
 end_date     = now_utc.strftime("%Y-%m-%d")
 
-# pull_date: when this run happened in Arizona/Mountain Standard Time (no daylight saving),
-# displayed in the same timestamp layout as the FEMS masked_observation_time field
-pull_date = (now_utc - timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+# pull_date: when this run happened in UTC, formatted like the FEMS timestamp fields.
+# The Z suffix identifies UTC so downstream tools can convert it to any local time zone.
+pull_date = now_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 # ========= QUERIES =========
 Q_WEATHER_OBS = """
@@ -236,10 +236,11 @@ def sync_history(path, df_new, timestamp_col):
     if os.path.exists(path):
         df_old = pd.read_csv(path, dtype=str)
 
-        # Migrate the former MST pull timestamp to the new name and display layout.
+        # Migrate the former MST pull timestamp to the new UTC field.
         if "Pull_date_mst" in df_old.columns:
             old_pull_mst = pd.to_datetime(df_old["Pull_date_mst"], errors="coerce")
-            migrated_pull_date = old_pull_mst.dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            old_pull_utc = old_pull_mst + pd.Timedelta(hours=7)
+            migrated_pull_date = old_pull_utc.dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
             if "pull_date" in df_old.columns:
                 df_old["pull_date"] = df_old["pull_date"].fillna(migrated_pull_date)
             else:
