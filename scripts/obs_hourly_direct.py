@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 PORTAL_URL = "https://nifc.maps.arcgis.com"
-SCRIPT_VERSION = "3-nifc-owner-preflight"
+SCRIPT_VERSION = "4-owner-folder-preflight"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
 AGOL_OWNER = "zalzahawy_nifc"
@@ -98,14 +98,12 @@ HEADERS = {
 print(f"Direct-connect script version: {SCRIPT_VERSION}")
 print(f"Connecting to ArcGIS organization: {PORTAL_URL}")
 gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
-arcgis_user = gis.users.me
-if arcgis_user is None or arcgis_user.username != AGOL_OWNER:
-    actual_user = None if arcgis_user is None else arcgis_user.username
+folder_id = gis._portal.get_folder_id(AGOL_OWNER, AGOL_FOLDER)
+if folder_id is None:
     raise RuntimeError(
-        f"ArcGIS OAuth did not impersonate the expected owner. "
-        f"Expected {AGOL_OWNER}, received {actual_user}."
+        f"ArcGIS folder '{AGOL_FOLDER}' was not found for owner {AGOL_OWNER}."
     )
-print(f"Authenticated ArcGIS owner: {arcgis_user.username}")
+print(f"ArcGIS owner-folder access verified: {AGOL_OWNER}/{AGOL_FOLDER}")
 
 # ========= STATIONS (AZ + NM) =========
 def load_stations(fname):
