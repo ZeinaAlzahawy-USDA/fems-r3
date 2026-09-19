@@ -14,6 +14,7 @@ from requests.auth import HTTPBasicAuth
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 PORTAL_URL = "https://www.arcgis.com"
+SCRIPT_VERSION = "2-owner-specific-create"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
 AGOL_OWNER = "zalzahawy_nifc"
@@ -384,18 +385,19 @@ def get_or_create_layer(gis, title, service_name, columns):
                 "spatialReference": {"wkid": 4326},
             },
         }
-        item = gis.content.create_service(
+        item_id = gis._portal.create_service(
             name=service_name,
             service_type="featureService",
             create_params=create_params,
             owner=AGOL_OWNER,
             folder=AGOL_FOLDER,
-            item_properties={
-                "title": title,
-                "tags": "FEMS,Southwest,Direct Connect,Hourly,Observed",
-                "snippet": "FEMS observed hourly data updated directly by GitHub Actions.",
-            },
+            tags="FEMS,Southwest,Direct Connect,Hourly,Observed",
+            snippet="FEMS observed hourly data updated directly by GitHub Actions.",
         )
+        if not item_id:
+            raise RuntimeError(f"ArcGIS did not create the hosted service: {title}")
+        item = gis.content.get(item_id)
+        item.update(item_properties={"title": title})
         FeatureLayerCollection.fromitem(item).manager.add_to_definition(
             {"layers": [layer_definition(title, columns)]}
         )
@@ -533,6 +535,7 @@ def sync_arcgis_layer(layer, df, columns):
 
 
 # ========= CONNECT AND SYNC DIRECTLY TO ARCGIS =========
+print(f"Direct-connect script version: {SCRIPT_VERSION}")
 print("Connecting to ArcGIS Online with OAuth app authentication")
 gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
 print(f"Connected to ArcGIS organization: {gis.properties.name}")
