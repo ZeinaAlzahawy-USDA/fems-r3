@@ -7,14 +7,13 @@ PORTAL_URL = "https://www.arcgis.com"
 
 
 def main():
-    username = os.environ["AGOL_USERNAME"]
-    password = os.environ["AGOL_PASSWORD"]
+    client_id = os.environ["AGOL_CLIENT_ID"]
+    client_secret = os.environ["AGOL_CLIENT_SECRET"]
 
-    print("Connecting to ArcGIS Online...")
-    gis = GIS(PORTAL_URL, username, password)
+    print("Connecting to ArcGIS Online with OAuth app authentication...")
+    gis = GIS(PORTAL_URL, client_id=client_id, client_secret=client_secret)
 
     print("Connection successful.")
-    print(f"Signed in as: {gis.users.me.username}")
     print(f"Organization: {gis.properties.name}")
     print("No ArcGIS content was created or changed.")
 
