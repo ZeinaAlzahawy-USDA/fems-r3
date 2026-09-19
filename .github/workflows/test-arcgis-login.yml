@@ -25,6 +25,6 @@ jobs:
 
       - name: Test ArcGIS login
         env:
-          AGOL_USERNAME: ${{ secrets.AGOL_USERNAME }}
-          AGOL_PASSWORD: ${{ secrets.AGOL_PASSWORD }}
+          AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+          AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
         run: python "scripts/test_arcgis_login.py"
