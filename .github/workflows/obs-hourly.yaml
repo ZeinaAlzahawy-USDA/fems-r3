@@ -6,7 +6,7 @@ on:
     types: [obs-hourly]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: fems-data
@@ -15,8 +15,6 @@ concurrency:
 jobs:
   obs-hourly:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,19 +27,12 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas python-dateutil
-
-      - name: Download existing history from release
-        run: |
-          gh release download obs-history -p history_hourly_weather.csv -D data || echo "history_hourly_weather.csv not in release yet (first run)"
-          gh release download obs-history -p history_hourly_nfdr.csv -D data || echo "history_hourly_nfdr.csv not in release yet (first run)"
+          pip install requests pandas python-dateutil arcgis==2.4.3
 
       - name: Run obs hourly pull
         env:
           FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
           FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
-        run: python scripts/obs_hourly.py
-
-      - name: Upload history to release
-        run: |
-          gh release upload obs-history data/history_hourly_weather.csv data/history_hourly_nfdr.csv --clobber
+          AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+          AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
+        run: python scripts/obs_hourly_direct.py
