@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 PORTAL_URL = "https://nifc.maps.arcgis.com"
-SCRIPT_VERSION = "4-owner-folder-preflight"
+SCRIPT_VERSION = "5-owner-identity-check"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
 AGOL_OWNER = "zalzahawy_nifc"
@@ -98,6 +98,20 @@ HEADERS = {
 print(f"Direct-connect script version: {SCRIPT_VERSION}")
 print(f"Connecting to ArcGIS organization: {PORTAL_URL}")
 gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
+
+me = None
+try:
+    me = gis.users.me
+except Exception as exc:
+    print(f"Could not resolve signed-in user: {exc}")
+print(f"Signed in as: {me.username if me else 'APP-ONLY TOKEN (no user identity)'}")
+if me is None or me.username != AGOL_OWNER:
+    raise RuntimeError(
+        "ArcGIS token is not acting as the owner account "
+        f"({AGOL_OWNER}). Check that AGOL_CLIENT_ID/AGOL_CLIENT_SECRET are from "
+        "'Southwest FEMS GitHub Owner Automation' (app auth, all owner privileges)."
+    )
+
 folder_id = gis._portal.get_folder_id(AGOL_OWNER, AGOL_FOLDER)
 if folder_id is None:
     raise RuntimeError(
