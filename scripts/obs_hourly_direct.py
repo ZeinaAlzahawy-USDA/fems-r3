@@ -16,6 +16,7 @@ ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 PORTAL_URL = "https://www.arcgis.com"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
+AGOL_OWNER = "zalzahawy_nifc"
 GROUP_ID = "3a8d33917b694e2d8587f301e1739a2f"
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 
@@ -354,7 +355,7 @@ def layer_definition(title, columns):
 
 def find_feature_service(gis, title):
     candidates = gis.content.search(
-        query=f'title:"{title}" AND type:"Feature Service"',
+        query=f'title:"{title}" AND type:"Feature Service" AND owner:{AGOL_OWNER}',
         max_items=100,
     )
     matches = [item for item in candidates if item.title == title]
@@ -387,6 +388,7 @@ def get_or_create_layer(gis, title, service_name, columns):
             name=service_name,
             service_type="featureService",
             create_params=create_params,
+            owner=AGOL_OWNER,
             folder=AGOL_FOLDER,
             item_properties={
                 "title": title,
