@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 PORTAL_URL = "https://nifc.maps.arcgis.com"
-SCRIPT_VERSION = "5-owner-identity-check"
+SCRIPT_VERSION = "6-app-token-capability-test"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
 AGOL_OWNER = "zalzahawy_nifc"
@@ -99,20 +99,22 @@ print(f"Direct-connect script version: {SCRIPT_VERSION}")
 print(f"Connecting to ArcGIS organization: {PORTAL_URL}")
 gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
 
-me = None
+# Report what identity the token carries, straight from portals/self.
 try:
-    me = gis.users.me
+    token_user = dict(gis.properties).get("user") or {}
+    print(f"Token user context: {token_user.get('username', 'NONE (app-only token)')}")
 except Exception as exc:
-    print(f"Could not resolve signed-in user: {exc}")
-print(f"Signed in as: {me.username if me else 'APP-ONLY TOKEN (no user identity)'}")
-if me is None or me.username != AGOL_OWNER:
-    raise RuntimeError(
-        "ArcGIS token is not acting as the owner account "
-        f"({AGOL_OWNER}). Check that AGOL_CLIENT_ID/AGOL_CLIENT_SECRET are from "
-        "'Southwest FEMS GitHub Owner Automation' (app auth, all owner privileges)."
-    )
+    print(f"Could not read portals/self user context: {exc}")
 
-folder_id = gis._portal.get_folder_id(AGOL_OWNER, AGOL_FOLDER)
+# The decisive test: try the owner-folder operation itself.
+try:
+    folder_id = gis._portal.get_folder_id(AGOL_OWNER, AGOL_FOLDER)
+except Exception as exc:
+    raise RuntimeError(
+        f"CAPABILITY TEST FAILED: the app token cannot access {AGOL_OWNER}'s "
+        f"content ({exc}). App authentication cannot act as the owner in this "
+        "org - switch to the fallback auth plan."
+    )
 if folder_id is None:
     raise RuntimeError(
         f"ArcGIS folder '{AGOL_FOLDER}' was not found for owner {AGOL_OWNER}."
