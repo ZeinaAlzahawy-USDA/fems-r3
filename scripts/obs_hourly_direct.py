@@ -13,8 +13,8 @@ from requests.auth import HTTPBasicAuth
 
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
-PORTAL_URL = "https://www.arcgis.com"
-SCRIPT_VERSION = "2-owner-specific-create"
+PORTAL_URL = "https://nifc.maps.arcgis.com"
+SCRIPT_VERSION = "3-nifc-owner-preflight"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
 AGOL_OWNER = "zalzahawy_nifc"
@@ -93,6 +93,19 @@ HEADERS = {
     "Accept": "application/json",
     "User-Agent": "FEMS-NM-AZ-GitHubActions/1.0",
 }
+
+# ========= VERIFY ARCGIS BEFORE THE LARGE FEMS PULL =========
+print(f"Direct-connect script version: {SCRIPT_VERSION}")
+print(f"Connecting to ArcGIS organization: {PORTAL_URL}")
+gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
+arcgis_user = gis.users.me
+if arcgis_user is None or arcgis_user.username != AGOL_OWNER:
+    actual_user = None if arcgis_user is None else arcgis_user.username
+    raise RuntimeError(
+        f"ArcGIS OAuth did not impersonate the expected owner. "
+        f"Expected {AGOL_OWNER}, received {actual_user}."
+    )
+print(f"Authenticated ArcGIS owner: {arcgis_user.username}")
 
 # ========= STATIONS (AZ + NM) =========
 def load_stations(fname):
@@ -534,12 +547,7 @@ def sync_arcgis_layer(layer, df, columns):
     print(f"ArcGIS layer count: {layer.query(where='1=1', return_count_only=True)}")
 
 
-# ========= CONNECT AND SYNC DIRECTLY TO ARCGIS =========
-print(f"Direct-connect script version: {SCRIPT_VERSION}")
-print("Connecting to ArcGIS Online with OAuth app authentication")
-gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
-print(f"Connected to ArcGIS organization: {gis.properties.name}")
-
+# ========= SYNC DIRECTLY TO ARCGIS =========
 weather_layer = get_or_create_layer(gis, WX_TITLE, WX_SERVICE_NAME, WX_COLUMNS)
 nfdr_layer = get_or_create_layer(gis, NFDR_TITLE, NFDR_SERVICE_NAME, NFDR_COLUMNS)
 
