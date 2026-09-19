@@ -3,7 +3,7 @@ import os
 from arcgis.gis import GIS
 
 
-PORTAL_URL = "https://nifc.maps.arcgis.com"
+PORTAL_URL = "https://www.arcgis.com"
 
 
 def main():
