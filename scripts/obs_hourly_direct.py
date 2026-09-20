@@ -32,14 +32,14 @@ EDIT_RETRIES = 3
 #   PUBLISHED - what the map / Experience Builder app shows. Editable.
 #               GitHub only writes rows here that nobody has hand-edited.
 WX_RAW_TITLE = "History hourly weather (raw)"
-WX_RAW_SERVICE_NAME = "southwest_fems_history_hourly_weather_raw"
+WX_RAW_SERVICE_NAME = "southwest_fems_history_hourly_weather_raw_v2"
 WX_PUB_TITLE = "History hourly weather"
-WX_PUB_SERVICE_NAME = "southwest_fems_history_hourly_weather"
+WX_PUB_SERVICE_NAME = "southwest_fems_history_hourly_weather_v2"
 
 NFDR_RAW_TITLE = "History hourly nfdr (raw)"
-NFDR_RAW_SERVICE_NAME = "southwest_fems_history_hourly_nfdr_raw"
+NFDR_RAW_SERVICE_NAME = "southwest_fems_history_hourly_nfdr_raw_v2"
 NFDR_PUB_TITLE = "History hourly nfdr"
-NFDR_PUB_SERVICE_NAME = "southwest_fems_history_hourly_nfdr"
+NFDR_PUB_SERVICE_NAME = "southwest_fems_history_hourly_nfdr_v2"
 
 # Extra fields that exist ONLY on the published layers. The Experience
 # Builder edit form should set user_edited="yes" (and ideally edited_by /
