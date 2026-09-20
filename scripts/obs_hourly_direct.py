@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 # ========= CONFIG =========
 ENDPOINT = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"
 PORTAL_URL = "https://nifc.maps.arcgis.com"
-SCRIPT_VERSION = "6-app-token-capability-test"
+SCRIPT_VERSION = "8-two-layer-edit-safe"
 DATA_DIR = "data"
 AGOL_FOLDER = "Southwest FEMS Direct Connect"
 AGOL_OWNER = "zalzahawy_nifc"
@@ -26,10 +26,26 @@ RETENTION_DAYS = 365
 EDIT_BATCH_SIZE = 500
 EDIT_RETRIES = 3
 
-WX_TITLE = "History hourly weather"
-WX_SERVICE_NAME = "southwest_fems_history_hourly_weather"
-NFDR_TITLE = "History hourly nfdr"
-NFDR_SERVICE_NAME = "southwest_fems_history_hourly_nfdr"
+# Two layers per dataset:
+#   RAW       - GitHub fully owns this. Deleted and reloaded every run.
+#               Not shared, not meant to be viewed or edited directly.
+#   PUBLISHED - what the map / Experience Builder app shows. Editable.
+#               GitHub only writes rows here that nobody has hand-edited.
+WX_RAW_TITLE = "History hourly weather (raw)"
+WX_RAW_SERVICE_NAME = "southwest_fems_history_hourly_weather_raw"
+WX_PUB_TITLE = "History hourly weather"
+WX_PUB_SERVICE_NAME = "southwest_fems_history_hourly_weather"
+
+NFDR_RAW_TITLE = "History hourly nfdr (raw)"
+NFDR_RAW_SERVICE_NAME = "southwest_fems_history_hourly_nfdr_raw"
+NFDR_PUB_TITLE = "History hourly nfdr"
+NFDR_PUB_SERVICE_NAME = "southwest_fems_history_hourly_nfdr"
+
+# Extra fields that exist ONLY on the published layers. The Experience
+# Builder edit form should set user_edited="yes" (and ideally edited_by /
+# edited_date) whenever someone saves a manual correction. Any row with
+# user_edited="yes" is left alone by the hourly refresh.
+TRACKING_COLUMNS = ["user_edited", "edited_by", "edited_date"]
 
 ROUND_1_COLS = [
     "one_hr_tl_fuel_moisture", "ten_hr_tl_fuel_moisture",
@@ -80,12 +96,17 @@ NUMERIC_COLUMNS = {
     "10 hr FM", "100 hr FM", "1000 hr FM", "IC", "SC", "ERC", "BI",
     "Herb FM", "Woody FM", "GSI",
 }
-DATE_COLUMNS = {"observation_time", "pull_date"}
+DATE_COLUMNS = {"observation_time", "pull_date", "edited_date"}
+
+# Natural keys used to match a row across runs. OBJECTID is NOT stable
+# for this purpose because the raw layer deletes and reinserts every hour.
+WX_KEY_COLUMNS = ["station_id", "observation_time"]
+NFDR_KEY_COLUMNS = ["station_id", "observation_time", "fuel_model"]
 
 FEMS_USERNAME = os.environ["FEMS_USERNAME"]
 FEMS_API_KEY = os.environ["FEMS_API_KEY"]
 AGOL_CLIENT_ID = os.environ["AGOL_CLIENT_ID"]
-AGOL_CLIENT_SECRET = os.environ["AGOL_CLIENT_SECRET"]
+AGOL_REFRESH_TOKEN = os.environ["AGOL_REFRESH_TOKEN"]
 FEMS_AUTH = HTTPBasicAuth(FEMS_USERNAME, FEMS_API_KEY)
 
 HEADERS = {
@@ -94,27 +115,42 @@ HEADERS = {
     "User-Agent": "FEMS-NM-AZ-GitHubActions/1.0",
 }
 
-# ========= VERIFY ARCGIS BEFORE THE LARGE FEMS PULL =========
+# ========= CONNECT TO ARCGIS (refresh-token auth - MFA-safe) =========
 print(f"Direct-connect script version: {SCRIPT_VERSION}")
 print(f"Connecting to ArcGIS organization: {PORTAL_URL}")
-gis = GIS(PORTAL_URL, client_id=AGOL_CLIENT_ID, client_secret=AGOL_CLIENT_SECRET)
 
-# Report what identity the token carries, straight from portals/self.
-try:
-    token_user = dict(gis.properties).get("user") or {}
-    print(f"Token user context: {token_user.get('username', 'NONE (app-only token)')}")
-except Exception as exc:
-    print(f"Could not read portals/self user context: {exc}")
-
-# The decisive test: try the owner-folder operation itself.
-try:
-    folder_id = gis._portal.get_folder_id(AGOL_OWNER, AGOL_FOLDER)
-except Exception as exc:
+token_response = requests.post(
+    f"{PORTAL_URL}/sharing/rest/oauth2/token",
+    data={
+        "client_id": AGOL_CLIENT_ID,
+        "grant_type": "refresh_token",
+        "refresh_token": AGOL_REFRESH_TOKEN,
+        "f": "json",
+    },
+    timeout=60,
+).json()
+if "access_token" not in token_response:
     raise RuntimeError(
-        f"CAPABILITY TEST FAILED: the app token cannot access {AGOL_OWNER}'s "
-        f"content ({exc}). App authentication cannot act as the owner in this "
-        "org - switch to the fallback auth plan."
+        f"Could not exchange the refresh token for an access token: {token_response}. "
+        "The refresh token has likely expired - run get_refresh_token.py locally "
+        "and update the AGOL_REFRESH_TOKEN secret in GitHub."
     )
+print(
+    f"ArcGIS access token obtained for user: {token_response.get('username')} "
+    f"(valid {token_response.get('expires_in')} seconds)"
+)
+
+try:
+    gis = GIS(PORTAL_URL, token=token_response["access_token"])
+except TypeError:
+    gis = GIS(PORTAL_URL, api_key=token_response["access_token"])
+
+me = gis.users.me
+print(f"Signed in as: {me.username if me else 'UNKNOWN'}")
+if me is None or me.username != AGOL_OWNER:
+    raise RuntimeError(f"Token is not acting as {AGOL_OWNER}; aborting.")
+
+folder_id = gis._portal.get_folder_id(AGOL_OWNER, AGOL_FOLDER)
 if folder_id is None:
     raise RuntimeError(
         f"ArcGIS folder '{AGOL_FOLDER}' was not found for owner {AGOL_OWNER}."
@@ -290,7 +326,7 @@ if not df_nfdr.empty:
     df_nfdr = df_nfdr.rename(columns=NFDR_RENAME)
 report("nfdr pull (observed only)", df_nfdr, "nfdr_type")
 
-# ========= ARCGIS DIRECT-CONNECT HELPERS =========
+# ========= ARCGIS HELPERS =========
 def safe_field_name(alias, used_names):
     name = re.sub(r"[^A-Za-z0-9_]", "_", alias).strip("_").lower()
     if not name or name[0].isdigit():
@@ -392,7 +428,7 @@ def find_feature_service(gis, title):
     return matches[0] if matches else None
 
 
-def get_or_create_layer(gis, title, service_name, columns):
+def get_or_create_layer(gis, title, service_name, columns, share):
     item = find_feature_service(gis, title)
     if item is None:
         print(f"Creating ArcGIS hosted feature layer: {title}")
@@ -429,8 +465,9 @@ def get_or_create_layer(gis, title, service_name, columns):
             {"layers": [layer_definition(title, columns)]}
         )
         item = gis.content.get(item.id)
-        item.share(groups=[GROUP_ID])
-        print(f"Created and shared {title}; item ID: {item.id}")
+        if share:
+            item.share(groups=[GROUP_ID])
+        print(f"Created{' and shared' if share else ''} {title}; item ID: {item.id}")
     else:
         print(f"Using existing ArcGIS hosted feature layer: {title} ({item.id})")
 
@@ -511,13 +548,7 @@ def chunks(values, size):
         yield values[index:index + size]
 
 
-def delete_refresh_and_expired_rows(layer):
-    window_sql = window_start.strftime("%Y-%m-%d %H:%M:%S")
-    cutoff_sql = cutoff_1yr.strftime("%Y-%m-%d %H:%M:%S")
-    where = (
-        f"observation_time >= TIMESTAMP '{window_sql}' "
-        f"OR observation_time < TIMESTAMP '{cutoff_sql}'"
-    )
+def delete_rows(layer, where):
     result = layer.query(where=where, return_ids_only=True)
     object_ids = result.get("objectIds") or []
 
@@ -527,10 +558,10 @@ def delete_refresh_and_expired_rows(layer):
         if failures:
             raise RuntimeError(f"ArcGIS delete failed: {failures[:3]}")
 
-    print(f"Deleted {len(object_ids)} rows inside refresh window or beyond retention")
+    return len(object_ids)
 
 
-def add_features_in_batches(layer, features):
+def add_features_in_batches(layer, features, label=""):
     added = 0
     for batch in chunks(features, EDIT_BATCH_SIZE):
         last_error = None
@@ -546,26 +577,166 @@ def add_features_in_batches(layer, features):
                 last_error = exc
                 if attempt == EDIT_RETRIES:
                     raise
-                print(f"ArcGIS add attempt {attempt} failed; retrying")
+                print(f"{label} add attempt {attempt} failed; retrying")
                 sleep(10)
         if last_error and added == 0:
             raise last_error
 
-    print(f"Added {added} refreshed rows")
+    print(f"{label} Added {added} rows")
 
 
-def sync_arcgis_layer(layer, df, columns):
-    delete_refresh_and_expired_rows(layer)
+def update_features_in_batches(layer, updates, label=""):
+    updated = 0
+    for batch in chunks(updates, EDIT_BATCH_SIZE):
+        last_error = None
+        for attempt in range(1, EDIT_RETRIES + 1):
+            try:
+                result = layer.edit_features(updates=batch, rollback_on_failure=True)
+                failures = [entry for entry in result.get("updateResults", []) if not entry.get("success")]
+                if failures:
+                    raise RuntimeError(f"ArcGIS update failed: {failures[:3]}")
+                updated += len(batch)
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt == EDIT_RETRIES:
+                    raise
+                print(f"{label} update attempt {attempt} failed; retrying")
+                sleep(10)
+        if last_error and updated == 0:
+            raise last_error
+
+    print(f"{label} Updated {updated} rows")
+
+
+def sync_raw_layer(layer, df, columns):
+    """Full delete-and-reload of the refresh window. This layer is never
+    edited by anyone, so a full overwrite is always safe here."""
+    window_sql = window_start.strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_sql = cutoff_1yr.strftime("%Y-%m-%d %H:%M:%S")
+    where = (
+        f"observation_time >= TIMESTAMP '{window_sql}' "
+        f"OR observation_time < TIMESTAMP '{cutoff_sql}'"
+    )
+    deleted = delete_rows(layer, where)
+    print(f"[raw] Deleted {deleted} rows inside refresh window or beyond retention")
+
     features = dataframe_to_features(df, layer, columns)
-    add_features_in_batches(layer, features)
-    print(f"ArcGIS layer count: {layer.query(where='1=1', return_count_only=True)}")
+    add_features_in_batches(layer, features, label="[raw]")
+    print(f"[raw] layer count: {layer.query(where='1=1', return_count_only=True)}")
 
 
-# ========= SYNC DIRECTLY TO ARCGIS =========
-weather_layer = get_or_create_layer(gis, WX_TITLE, WX_SERVICE_NAME, WX_COLUMNS)
-nfdr_layer = get_or_create_layer(gis, NFDR_TITLE, NFDR_SERVICE_NAME, NFDR_COLUMNS)
+def time_key(value):
+    """Canonical string form of a date/time value, used to match the same
+    observation across runs regardless of source format."""
+    parsed = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(parsed):
+        return None
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-sync_arcgis_layer(weather_layer, df_wx, WX_COLUMNS)
-sync_arcgis_layer(nfdr_layer, df_nfdr, NFDR_COLUMNS)
 
-print("Done: obs_hourly_direct.")
+def natural_key(row, key_columns):
+    parts = []
+    for column in key_columns:
+        value = row.get(column)
+        if column in DATE_COLUMNS:
+            value = time_key(value)
+        parts.append(str(value))
+    return tuple(parts)
+
+
+def fetch_published_existing(layer, key_columns, window_start_sql):
+    """Rows already in the published layer within the refresh window, keyed
+    by natural key, with their OBJECTID and edit flag."""
+    lookup_columns = list(dict.fromkeys(key_columns + ["user_edited"]))
+    lookup_field_map = field_map_for_layer(layer, lookup_columns)
+    out_fields = ["OBJECTID"] + [lookup_field_map[column] for column in lookup_columns]
+    out_fields = list(dict.fromkeys(out_fields))
+
+    result = layer.query(
+        where=f"observation_time >= TIMESTAMP '{window_start_sql}'",
+        out_fields=",".join(out_fields),
+        return_geometry=False,
+    )
+
+    inverse_map = {field_name: column for column, field_name in lookup_field_map.items()}
+    existing = {}
+    for feature in result.features:
+        attrs = feature.attributes
+        row = {inverse_map.get(name, name): value for name, value in attrs.items()}
+        row["OBJECTID"] = attrs.get("OBJECTID")
+        key = natural_key(row, key_columns)
+        existing[key] = {
+            "objectid": row.get("OBJECTID"),
+            "user_edited": row.get("user_edited"),
+        }
+    return existing
+
+
+def sync_published_layer(layer, df, columns, key_columns, cutoff_sql, label=""):
+    """Only removes truly expired rows. For rows inside the refresh window,
+    inserts new ones and refreshes unedited ones, but never touches a row
+    someone has manually corrected (user_edited == 'yes')."""
+    deleted = delete_rows(layer, f"observation_time < TIMESTAMP '{cutoff_sql}'")
+    print(f"{label} Deleted {deleted} expired rows (beyond retention)")
+
+    if df.empty:
+        print(f"{label} No incoming rows to sync this run")
+        return
+
+    value_field_map = field_map_for_layer(layer, columns)
+    window_start_sql = window_start.strftime("%Y-%m-%d %H:%M:%S")
+    existing = fetch_published_existing(layer, key_columns, window_start_sql)
+
+    inserts, updates, skipped = [], [], 0
+    for row in df.to_dict(orient="records"):
+        key = natural_key(row, key_columns)
+        attributes = {
+            value_field_map[column]: normalize_attribute(row.get(column), column)
+            for column in columns
+        }
+        match = existing.get(key)
+
+        if match is None:
+            feature = {"attributes": attributes}
+            longitude = normalize_attribute(row.get("longitude"), "longitude")
+            latitude = normalize_attribute(row.get("latitude"), "latitude")
+            if longitude is not None and latitude is not None:
+                feature["geometry"] = {
+                    "x": longitude,
+                    "y": latitude,
+                    "spatialReference": {"wkid": 4326},
+                }
+            inserts.append(feature)
+        elif str(match.get("user_edited") or "").strip().lower() == "yes":
+            skipped += 1
+        else:
+            attributes["OBJECTID"] = match["objectid"]
+            updates.append({"attributes": attributes})
+
+    print(f"{label} {len(inserts)} new, {len(updates)} refreshed, {skipped} skipped (user-edited)")
+
+    add_features_in_batches(layer, inserts, label=label)
+    update_features_in_batches(layer, updates, label=label)
+    print(f"{label} layer count: {layer.query(where='1=1', return_count_only=True)}")
+
+
+# ========= SYNC: RAW (full overwrite) + PUBLISHED (edit-safe merge) =========
+cutoff_sql = cutoff_1yr.strftime("%Y-%m-%d %H:%M:%S")
+
+wx_raw_layer = get_or_create_layer(gis, WX_RAW_TITLE, WX_RAW_SERVICE_NAME, WX_COLUMNS, share=False)
+wx_pub_layer = get_or_create_layer(
+    gis, WX_PUB_TITLE, WX_PUB_SERVICE_NAME, WX_COLUMNS + TRACKING_COLUMNS, share=True
+)
+nfdr_raw_layer = get_or_create_layer(gis, NFDR_RAW_TITLE, NFDR_RAW_SERVICE_NAME, NFDR_COLUMNS, share=False)
+nfdr_pub_layer = get_or_create_layer(
+    gis, NFDR_PUB_TITLE, NFDR_PUB_SERVICE_NAME, NFDR_COLUMNS + TRACKING_COLUMNS, share=True
+)
+
+sync_raw_layer(wx_raw_layer, df_wx, WX_COLUMNS)
+sync_published_layer(wx_pub_layer, df_wx, WX_COLUMNS, WX_KEY_COLUMNS, cutoff_sql, label="[weather published]")
+
+sync_raw_layer(nfdr_raw_layer, df_nfdr, NFDR_COLUMNS)
+sync_published_layer(nfdr_pub_layer, df_nfdr, NFDR_COLUMNS, NFDR_KEY_COLUMNS, cutoff_sql, label="[nfdr published]")
+
+print("Done: obs_hourly_direct (raw + published, edit-safe).")
