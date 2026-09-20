@@ -27,9 +27,9 @@ EDIT_BATCH_SIZE = 2000
 EDIT_RETRIES = 3
 
 WX_TITLE = "History hourly weather"
-WX_SERVICE_NAME = "southwest_fems_history_hourly_weather_v2"
+WX_SERVICE_NAME = "southwest_fems_history_hourly_weather_v3"
 NFDR_TITLE = "History hourly nfdr"
-NFDR_SERVICE_NAME = "southwest_fems_history_hourly_nfdr_v2"
+NFDR_SERVICE_NAME = "southwest_fems_history_hourly_nfdr_v3"
 
 ROUND_1_COLS = [
     "one_hr_tl_fuel_moisture", "ten_hr_tl_fuel_moisture",
