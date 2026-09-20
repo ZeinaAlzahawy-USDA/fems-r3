@@ -34,5 +34,5 @@ jobs:
           FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
           FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
           AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
-          AGOL_REFRESH_TOKEN: ${{ secrets.AGOL_REFRESH_TOKEN }}
+          AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
         run: python scripts/obs_hourly_direct.py
