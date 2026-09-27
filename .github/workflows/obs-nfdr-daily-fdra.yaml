@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   repository_dispatch:
     types: [obs-nfdr-daily-fdra]
-  workflow_run:
-    workflows: ["FEMS Obs Daily MinMax (NM+AZ)"]
-    types: [completed]
 
 permissions:
   contents: write
@@ -17,7 +14,6 @@ concurrency:
 
 jobs:
   build-fdra-daily:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
