@@ -1,0 +1,48 @@
+name: Build Observed Daily FDRA NFDR
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [obs-nfdr-daily-fdra]
+  workflow_run:
+    workflows: ["FEMS Obs Daily MinMax (NM+AZ)"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fems-data
+  cancel-in-progress: false
+
+jobs:
+  build-fdra-daily:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Download latest observed NFDR history
+        run: |
+          mkdir -p data
+          gh release download obs-history -p history_daily_nfdrminmax.csv -D data --clobber
+
+      - name: Build observed daily FDRA NFDR
+        run: python scripts/obs_nfdr_daily_fdra.py
+
+      - name: Upload daily FDRA output
+        run: |
+          gh release upload obs-history data/obs_nfdr_daily_fdra.csv --clobber
