@@ -60,6 +60,8 @@ OUTPUT_COLUMNS = [
     "FDRA_ZONE",
     "Zone",
     "FDRA",
+    "Shape_Area",
+    "Shape_Length",
     "ObservationDate",
     "NFDRType",
     "FuelModel",
@@ -119,7 +121,15 @@ def main():
     )
     require_columns(
         fdra,
-        ["SIG_RAWS", "FDRA_ZONE", "Zone", "FDRA", "FM_Long"],
+        [
+            "SIG_RAWS",
+            "FDRA_ZONE",
+            "Zone",
+            "FDRA",
+            "FM_Long",
+            "Shape_Area",
+            "Shape_Length",
+        ],
         FDRA_IN,
     )
     require_columns(
@@ -218,6 +228,10 @@ def main():
         daily.insert(0, "Zone", zone["Zone"])
         daily.insert(0, "FDRA_ZONE", zone["FDRA_ZONE"])
         daily.insert(0, "SIG_RAWS", zone["SIG_RAWS"])
+        daily["Shape_Area"] = pd.to_numeric(zone["Shape_Area"], errors="coerce")
+        daily["Shape_Length"] = pd.to_numeric(
+            zone["Shape_Length"], errors="coerce"
+        )
         daily["FuelModel"] = fuel_model
         daily["ObservationDate"] = daily["ObservationDate"].map(
             lambda value: value.isoformat()
