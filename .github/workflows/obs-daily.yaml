@@ -29,7 +29,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas numpy python-dateutil
+          pip install requests pandas numpy python-dateutil arcgis
 
       - name: Download existing history from release
         run: |
@@ -47,7 +47,12 @@ jobs:
         run: |
           gh release upload obs-history data/history_daily_weatherminmax.csv data/history_daily_nfdrminmax.csv --clobber
 
-      - name: Build observed daily FDRA NFDR
+      - name: Build observed daily FDRA NFDR and refresh ArcGIS
+        env:
+          AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+          AGOL_REFRESH_TOKEN: ${{ secrets.AGOL_REFRESH_TOKEN }}
+          ARCGIS_PORTAL_URL: https://nifc.maps.arcgis.com
+          ARCGIS_FDRA_ITEM_ID: 66e86d16806046c098a0e2860cb520bc
         run: python scripts/obs_nfdr_daily_fdra.py
 
       - name: Upload daily FDRA output
