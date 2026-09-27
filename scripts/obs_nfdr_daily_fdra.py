@@ -11,22 +11,48 @@ PERCENTILE_IN = os.path.join(DATA_DIR, "r3_fdra_percentile_historical.csv")
 OUTPUT = os.path.join(DATA_DIR, "obs_nfdr_daily_fdra.csv")
 
 SOURCE_TO_AVERAGE = {
-    "Min 1 hr FM": "Avg1HrFM",
-    "Min 10 hr FM": "Avg10HrFM",
-    "Min 100 hr FM": "Avg100HrFM",
-    "Min 1000 hr FM": "Avg1000HrFM",
+    "Min 1 hr FM": "AvgMin1HrFM",
+    "Min 10 hr FM": "AvgMin10HrFM",
+    "Min 100 hr FM": "AvgMin100HrFM",
+    "Min 1000 hr FM": "AvgMin1000HrFM",
     "Woody FM": "AvgWoodFM",
     "KBDI": "AvgKBDI",
     "GSI": "AvgGSI",
     "Herb FM": "AvgHerbFM",
-    "Max IC": "AvgIC",
-    "Max ERC": "AvgERC",
-    "Max SC": "AvgSC",
-    "Max BI": "AvgBI",
+    "Max IC": "AvgMaxIC",
+    "Max ERC": "AvgMaxERC",
+    "Max SC": "AvgMaxSC",
+    "Max BI": "AvgMaxBI",
+}
+
+# Historical percentile thresholds retain their existing column names.
+AVERAGE_TO_HISTORICAL = {
+    "AvgMin1HrFM": "Avg1HrFM",
+    "AvgMin10HrFM": "Avg10HrFM",
+    "AvgMin100HrFM": "Avg100HrFM",
+    "AvgMin1000HrFM": "Avg1000HrFM",
+    "AvgWoodFM": "AvgWoodFM",
+    "AvgKBDI": "AvgKBDI",
+    "AvgGSI": "AvgGSI",
+    "AvgHerbFM": "AvgHerbFM",
+    "AvgMaxIC": "AvgIC",
+    "AvgMaxERC": "AvgERC",
+    "AvgMaxSC": "AvgSC",
+    "AvgMaxBI": "AvgBI",
 }
 AVERAGE_TO_PERCENTILE = {
-    average: average.replace("Avg", "Pct", 1)
-    for average in SOURCE_TO_AVERAGE.values()
+    "AvgMin1HrFM": "PctMin1HrFM",
+    "AvgMin10HrFM": "PctMin10HrFM",
+    "AvgMin100HrFM": "PctMin100HrFM",
+    "AvgMin1000HrFM": "PctMin1000HrFM",
+    "AvgWoodFM": "PctWoodFM",
+    "AvgKBDI": "PctKBDI",
+    "AvgGSI": "PctGSI",
+    "AvgHerbFM": "PctHerbFM",
+    "AvgMaxIC": "PctMaxIC",
+    "AvgMaxERC": "PctMaxERC",
+    "AvgMaxSC": "PctMaxSC",
+    "AvgMaxBI": "PctMaxBI",
 }
 
 OUTPUT_COLUMNS = [
@@ -37,9 +63,7 @@ OUTPUT_COLUMNS = [
     "ObservationDate",
     "NFDRType",
     "FuelModel",
-    "StationsExpected",
     "StationsUsed",
-    "DataComplete",
     *SOURCE_TO_AVERAGE.values(),
     *AVERAGE_TO_PERCENTILE.values(),
 ]
@@ -100,7 +124,7 @@ def main():
     )
     require_columns(
         historical,
-        ["FDRA_ZONE", "Percentiles", *SOURCE_TO_AVERAGE.values()],
+        ["FDRA_ZONE", "Percentiles", *AVERAGE_TO_HISTORICAL.values()],
         PERCENTILE_IN,
     )
 
@@ -120,9 +144,9 @@ def main():
         nfdr[source_column] = pd.to_numeric(nfdr[source_column], errors="coerce")
 
     historical["Percentiles"] = pd.to_numeric(historical["Percentiles"], errors="coerce")
-    for average_column in SOURCE_TO_AVERAGE.values():
-        historical[average_column] = pd.to_numeric(
-            historical[average_column], errors="coerce"
+    for historical_column in AVERAGE_TO_HISTORICAL.values():
+        historical[historical_column] = pd.to_numeric(
+            historical[historical_column], errors="coerce"
         )
 
     output_frames = []
@@ -194,9 +218,7 @@ def main():
         daily.insert(0, "Zone", zone["Zone"])
         daily.insert(0, "FDRA_ZONE", zone["FDRA_ZONE"])
         daily.insert(0, "SIG_RAWS", zone["SIG_RAWS"])
-        daily.insert(6, "FuelModel", fuel_model)
-        daily.insert(7, "StationsExpected", expected)
-        daily.insert(9, "DataComplete", True)
+        daily["FuelModel"] = fuel_model
         daily["ObservationDate"] = daily["ObservationDate"].map(
             lambda value: value.isoformat()
         )
@@ -211,7 +233,7 @@ def main():
             daily[percentile_column] = daily[average_column].apply(
                 lambda value, column=average_column: percentile_for_value(
                     value,
-                    zone_history[column],
+                    zone_history[AVERAGE_TO_HISTORICAL[column]],
                     zone_history["Percentiles"],
                 )
             )
@@ -229,10 +251,15 @@ def main():
         raise RuntimeError("No complete FDRA daily averages were produced")
 
     output = pd.concat(output_frames, ignore_index=True)
-    output = output.sort_values(["ObservationDate", "FDRA_ZONE"]).reset_index(drop=True)
+    latest_date = output["ObservationDate"].max()
+    output = output[output["ObservationDate"].eq(latest_date)].copy()
+    output = output.sort_values("FDRA_ZONE").reset_index(drop=True)
     os.makedirs(DATA_DIR, exist_ok=True)
     output.to_csv(OUTPUT, index=False)
-    print(f"Created {OUTPUT}: {len(output)} rows across {output['FDRA_ZONE'].nunique()} FDRAs")
+    print(
+        f"Created {OUTPUT}: {len(output)} rows for {latest_date} "
+        f"across {output['FDRA_ZONE'].nunique()} FDRAs"
+    )
 
 
 if __name__ == "__main__":
