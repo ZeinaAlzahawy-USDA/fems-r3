@@ -1,0 +1,23 @@
+FID,FDRA,Zone,FDRA_ID,MFD_Thresh,LFD_Threshold,SIG_RAWS,Analysis_Period,FM_Short,FM_Long,FDRA_ZONE
+1,Brush,FDZ,5,2,8,"20511, 20503, 20219",1/1/2005-12/31/2024, ,Y,FDZ Brush
+2,Brush,PIFC,2,2,5,"20610, 20602, 20603",1/1/2005-12/31/2024,W,Y,PIFC Brush
+3,Brush,WAZ,3,2,10,"20219, 20503, 20511",1/1/2005-12/31/2024, ,Y,WAZ Brush
+7,Desert Grasslands,GLZ,3,2,50,"292504, 21104, 292702",1/1/2005-12/31/2024, ,Y,GLZ Desert Grasslands
+14,Forested,GLZ,1,2,20,"20401, 292001, 292004",1/1/2005-12/31/2024, ,Y,GLZ Forested
+15,Forested,WAZ,1,2,5,"20501, 20502, 20511",1/1/2005-12/31/2024, ,Y,WAZ Forested
+21,Magdalena & San Mateo,ABZ,2,2,5,"292104, 292009, 292012",1/1/2005-12/31/2024, ,Y,ABZ Magdalena & San Mateo
+23,Mogollon Rim,FDZ,4,4,8,"20209, 20291, 20215",1/1/2005-12/31/2024, ,Y,FDZ Mogollon Rim
+24,Mogollon Rim,WDZ,4,4,8,"20284, 20209, 20291, 20215",1/1/2005-12/31/2024, ,Y,WDZ Mogollon Rim
+26,Mt Taylor & Zuni,ABZ,1,2,5,"293303, 291302, 291301",1/1/2005-12/31/2024, ,Y,ABZ Mt Taylor & Zuni
+27,Navajo & Hopi,FDZ,7,2,8,"20226, 20312, 290102",1/1/2005-12/31/2024, ,Y,FDZ Navajo & Hopi
+29,North Kaibab & North Rim,WDZ,3,2,8,"20216, 20220, 20211, 20212",1/1/2005-12/31/2024, ,Y,WDZ North Kaibab & North Rim
+30,PJ Transition,GLZ,2,1,10,"293301, 293305, 290603",1/1/2005-12/31/2024, ,Y,GLZ PJ Transition
+37,San Juan Basin,TDZ,5,2,5,"290205, 290201, 290203",1/1/2005-12/31/2024,Y,Y,TDZ San Juan Basin
+40,Sandia & Manzano,ABZ,3,2,15,"291402, 291501",1/1/2005-12/31/2024, ,Y,ABZ Sandia & Manzano
+46,Transition,WAZ,4,2,100,"20508, 20507, 20509, 20510",1/1/2005-12/31/2024, ,Y,WAZ Transition
+47,Tusayan & South Rim,FDZ,2,2,8,"20209, 20207, 20284",1/1/2005-12/31/2024, ,Y,FDZ Tusayan & South Rim
+48,Tusayan & South Rim,WDZ,2,2,8,"20209, 20207, 20284",1/1/2005-12/31/2024, ,Y,WDZ Tusayan & South Rim
+51,Western Grasslands & Woodland,WDZ,1,2,8,"20120, 20213, 20119",1/1/2005-12/31/2024, ,Y,WDZ Western Grasslands & Woodland
+,,,,,,,,,,
+,,,,,,,,,,
+,,,,,                                                                             ,,,,,
