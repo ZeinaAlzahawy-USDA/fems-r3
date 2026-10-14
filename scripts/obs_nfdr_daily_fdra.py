@@ -156,12 +156,12 @@ def inspect_arcgis_upload(path):
         for row in rows
         if row.get("ObservationDate", "").strip()
     }
-    if len(observation_dates) != 1:
+    if not 1 <= len(observation_dates) <= 3:
         raise ValueError(
-            "ArcGIS upload file must contain exactly one ObservationDate; found "
+            "ArcGIS upload file must contain between one and three ObservationDate values; found "
             + ", ".join(sorted(observation_dates))
         )
-    return len(rows), observation_dates.pop()
+    return len(rows), ", ".join(sorted(observation_dates))
 
 
 def overwrite_arcgis_table():
@@ -367,14 +367,14 @@ def main():
         raise RuntimeError("No complete FDRA daily averages were produced")
 
     output = pd.concat(output_frames, ignore_index=True)
-    latest_date = output["ObservationDate"].max()
-    output = output[output["ObservationDate"].eq(latest_date)].copy()
-    output = output.sort_values("FDRA_ZONE").reset_index(drop=True)
+    retained_dates = sorted(output["ObservationDate"].dropna().unique())[-3:]
+    output = output[output["ObservationDate"].isin(retained_dates)].copy()
+    output = output.sort_values(["ObservationDate", "FDRA_ZONE"]).reset_index(drop=True)
     os.makedirs(DATA_DIR, exist_ok=True)
     output.to_csv(OUTPUT, index=False)
     print(
-        f"Created {OUTPUT}: {len(output)} rows for {latest_date} "
-        f"across {output['FDRA_ZONE'].nunique()} FDRAs"
+        f"Created {OUTPUT}: {len(output)} rows for the last {len(retained_dates)} dates "
+        f"({', '.join(retained_dates)}) across {output['FDRA_ZONE'].nunique()} FDRAs"
     )
     overwrite_arcgis_table()
 
