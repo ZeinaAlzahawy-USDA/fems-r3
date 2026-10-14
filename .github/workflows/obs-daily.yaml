@@ -1,6 +1,8 @@
 name: FEMS Obs Daily MinMax (NM+AZ)
 
 on:
+  schedule:
+    - cron: '15 12 * * *'
   workflow_dispatch:        # optional manual run
   repository_dispatch:
     types: [obs-daily]
