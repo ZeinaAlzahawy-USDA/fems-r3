@@ -195,6 +195,8 @@ def main():
     fdra = pd.read_csv(P("r3_fdra.csv"), dtype=str).dropna(subset=["FDRA_ZONE"])
     fdra = fdra[fdra["FDRA_ZONE"].str.strip() != ""]
     hist = pd.read_csv(P("r3_fdra_percentile_historical.csv"))
+    climo_path = P("r3_fdra_daily_climo.csv")   # optional: from the one-time 2005-2024 history pull
+    climo = pd.read_csv(climo_path) if os.path.exists(climo_path) else None
     fdra_obs_path = P("obs_nfdr_daily_fdra.csv")
     fdra_official = pd.read_csv(fdra_obs_path) if os.path.exists(fdra_obs_path) else None
 
@@ -302,8 +304,13 @@ def main():
             "erc_refs": refs["erc"], "bi_refs": refs["bi"],
         }
         fdra_list.append(item)
-        write_json(os.path.join(OUT_DIR, "fdra", item["slug"] + ".json"),
-                   {"key": key, "fuel_model": fm, "refs": refs, "season": season, "forecast": forecast})
+        fdra_file = {"key": key, "fuel_model": fm, "refs": refs, "season": season, "forecast": forecast}
+        if climo is not None:
+            c = climo[climo["FDRA_ZONE"].str.strip() == key].sort_values("doy")
+            if len(c):
+                fdra_file["climo"] = [{"doy": int(r.doy), "erc_avg": rnd(r.erc_avg, 1), "erc_max": rnd(r.erc_max, 1),
+                                       "bi_avg": rnd(r.bi_avg, 1), "bi_max": rnd(r.bi_max, 1)} for r in c.itertuples()]
+        write_json(os.path.join(OUT_DIR, "fdra", item["slug"] + ".json"), fdra_file)
 
     # ---------- per-station files ----------
     info_cols = ["station_name", "wrcc_id", "latitude", "longitude", "elevation"]
