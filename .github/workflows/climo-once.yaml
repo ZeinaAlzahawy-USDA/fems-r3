@@ -1,0 +1,55 @@
+name: FDRA History 2005-2024 (one time)
+
+# Run by hand only. Pulls 2005–2024 daily ERC/BI from FEMS for the FDRA stations
+# and saves the Average / Historical max lines used by the website charts.
+on:
+  workflow_dispatch:
+    inputs:
+      start_year:
+        description: "First year"
+        default: "2005"
+      end_year:
+        description: "Last year"
+        default: "2024"
+
+permissions:
+  contents: write
+  actions: write
+
+# Own group: it only reads from FEMS, so it never holds up the hourly pipeline
+concurrency:
+  group: fdra-climo
+  cancel-in-progress: false
+
+jobs:
+  climo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
+      FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
+      CLIMO_START_YEAR: ${{ inputs.start_year }}
+      CLIMO_END_YEAR: ${{ inputs.end_year }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install pandas requests
+
+      - name: Pull history and build daily average / max
+        run: python scripts/build_fdra_climo.py
+
+      - name: Save to a release (fdra-climo)
+        run: |
+          gh release view fdra-climo >/dev/null 2>&1 || gh release create fdra-climo --title "FDRA history ${CLIMO_START_YEAR}-${CLIMO_END_YEAR}" --notes "Daily average and max ERC/BI per FDRA for the website charts."
+          gh release upload fdra-climo data/r3_fdra_daily_climo.csv data/history_${CLIMO_START_YEAR}_${CLIMO_END_YEAR}_daily_erc_bi.csv --clobber
+
+      - name: Rebuild the website
+        run: gh workflow run website.yaml

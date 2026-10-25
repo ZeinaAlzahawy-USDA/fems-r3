@@ -45,6 +45,7 @@ jobs:
             -p history_hourly_weather.csv -p obs_nfdr_daily_fdra.csv
           gh release download forecast-data -D data --clobber \
             -p history_forecast_daily_nfdr.csv -p history_forecast_daily_weather.csv
+          gh release download fdra-climo -D data --clobber -p r3_fdra_daily_climo.csv || echo "No FDRA history yet (charts show without Average/Max lines)"
 
       - name: Build website data
         run: python scripts/build_web_data.py
