@@ -72,7 +72,8 @@ header.top{background:var(--surface);border-bottom:1px solid var(--line)}
 
 /* zone tabs */
 nav.zones{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
-.zones .wrap{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin;padding-top:8px}
+.zones .wrap{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;padding-top:8px}
+.zones .wrap::-webkit-scrollbar{display:none}
 .ztab{flex:none;border:1px solid var(--line);border-bottom:none;background:var(--tab);padding:8px 16px;border-radius:7px 7px 0 0;cursor:pointer;font-weight:600;font-size:14px;color:var(--ink-2);display:flex;gap:8px;align-items:center}
 .ztab .count{font-weight:500;font-size:12px;color:var(--ink-3)}
 .ztab[aria-selected="true"]{background:var(--bg);color:var(--ink);border-color:var(--line-strong);position:relative;top:1px}
@@ -146,7 +147,7 @@ table.bpt td{color:var(--cls-ink)}
 .footnote{font-size:12px;color:var(--ink-3);margin-top:8px}
 
 /* station drawer */
-.drawer{position:fixed;right:16px;bottom:16px;width:min(420px,calc(100vw - 32px));max-height:min(80vh,640px);overflow:auto;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.18);z-index:50;display:none}
+.drawer{position:fixed;z-index:1000;right:16px;bottom:16px;width:min(420px,calc(100vw - 32px));max-height:min(80vh,640px);overflow:auto;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.18);display:none}
 .drawer.show{display:block}
 .drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface)}
 .drawer h3{margin:0;font-size:16px}
@@ -220,6 +221,9 @@ table.outlook tr.zrow th{font-size:14.5px}
 table.outlook tr.zrow td,table.outlook tr.zrow th{border-bottom:2px solid var(--line-strong)}
 .muted{color:var(--ink-3)}
 @media (max-width:700px){ .fdra-bar .chips{margin-left:0;padding-left:0;border-left:none;flex-basis:100%} .phead h2{font-size:18px} }
+/* remove the map's blue focus frame (it drew over the station panel) */
+.esri-view .esri-view-surface--inset-outline:focus::after,.esri-view .esri-view-surface:focus::after{outline:none!important;content:none!important}
+.esri-view .esri-view-surface:focus,.esri-view:focus{outline:none!important}
 footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40px}
 
 @media (max-width:700px){
