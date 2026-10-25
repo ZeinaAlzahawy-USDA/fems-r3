@@ -223,6 +223,36 @@ table.outlook tr.zhead .sw{display:inline-block;width:12px;height:12px;border-ra
 table.outlook tr.zrow th{font-size:14.5px}
 table.outlook tr.zrow td,table.outlook tr.zrow th{border-bottom:2px solid var(--line-strong)}
 .muted{color:var(--ink-3)}
+:root{--l-obs:#1f4fa8;--l-avg:#6f6b63;--l-max:#c23b3b}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--l-obs:#1f4fa8;--l-avg:#55524b;--l-max:#b02f2f}}
+.charts{display:grid;grid-template-columns:1fr;gap:18px}
+@media (min-width:1150px){.charts{grid-template-columns:1fr 1fr}}
+figure.chart{margin:0;min-width:0}
+figure.chart figcaption{font-size:14.5px;margin-bottom:4px}
+.clegend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);margin-bottom:6px}
+.clegend i.ln{display:inline-block;width:22px;height:0;border-top:2.5px solid var(--l-obs);vertical-align:middle;margin-right:6px}
+.clegend i.fc{border-top-style:dashed}
+.clegend i.avg{border-top-color:var(--l-avg);border-top-width:2px}
+.clegend i.max{border-top-color:var(--l-max);border-top-width:2px}
+.cbox{position:relative;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.cbox svg{display:block}
+.cbox .gl{stroke:rgba(0,0,0,.12);stroke-width:1}
+.cbox .gl.v{stroke:rgba(0,0,0,.07)}
+.cbox .tk{font-size:11px;fill:#55524b}
+.cbox .bl{font-size:11px;fill:#3a3833;font-weight:600}
+.cbox .l-obs{fill:none;stroke:var(--l-obs);stroke-width:2.2;stroke-linejoin:round}
+.cbox .l-fc{fill:none;stroke:var(--l-obs);stroke-width:2.2;stroke-dasharray:5 4}
+.cbox .l-avg{fill:none;stroke:var(--l-avg);stroke-width:1.6}
+.cbox .l-max{fill:none;stroke:var(--l-max);stroke-width:1.6}
+.cbox .dot-fc{fill:#fff;stroke:var(--l-obs);stroke-width:1.5}
+.cbox .dot-now{fill:var(--l-obs);stroke:#fff;stroke-width:2}
+.cbox .xh{stroke:#1b1a17;stroke-width:1;stroke-dasharray:3 3}
+.ctip{position:absolute;pointer-events:none;background:#1b1a17;color:#fff;font-size:12.5px;padding:6px 9px;border-radius:6px;white-space:nowrap;line-height:1.45}
+.ctip .tsw{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 6px;vertical-align:-1px}
+.seg{gap:0!important}
+.seg button{border:1px solid var(--line-strong);background:var(--surface);padding:5px 12px;font-size:13px;cursor:pointer}
+.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0;border-left:none}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .nodata{border:1px dashed var(--line-strong);border-radius:8px;padding:18px;color:var(--ink-2);background:var(--surface-2);font-size:14px;line-height:1.6}
 @media (max-width:700px){ .fdra-bar .chips{margin-left:0;padding-left:0;border-left:none;flex-basis:100%} .phead h2{font-size:18px} }
 /* remove the map's blue focus frame (it drew over the station panel) */
@@ -611,7 +641,14 @@ function renderView() {
   el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(f.name)} FDRA</h2>
       <div class="rating-box">${ratingBox(f)}</div>
       <div class="pmeta">Zone ${esc(zoneLabel(f.zone))} · Reporting stations: ${stationLinks(f.sig_raws)}</div></div>
-      ${legendHtml()}${reportTable(f)}<div class="under">${breakpointTable(f)}</div></section>`;
+      ${legendHtml()}${reportTable(f)}<div class="under">${breakpointTable(f)}</div></section>
+    <section class="panel" id="chartPanel"><div class="phead"><h2>Season charts</h2>
+      <div class="rating-box seg" role="group" aria-label="Chart range">
+        <button data-range="year" aria-pressed="${chartRange === "year"}">This year</button>
+        <button data-range="90" aria-pressed="${chartRange === "90"}">Last 90 days</button></div>
+      <div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · bands use percentiles from ${esc(f.analysis_period)}</div></div>
+      <div class="charts" id="charts"><div class="muted">Loading charts…</div></div></section>`;
+  loadCharts(f);
 }
 
 function renderAll() {
@@ -640,6 +677,97 @@ function renderLegend() {
     <span class="it"><span class="sw" style="background:#b8b4ab"></span>Not an FDRA station</span>
     <span class="it"><span class="sw" style="background:transparent;border:1px dashed #6e6a62;border-radius:2px"></span>FDRA without data yet</span></div>`;
 }
+
+/* ---------------- season charts (ERC / BI) ---------------- */
+let chartRange = "year";
+const CHART_CACHE = {};
+const CHART_INDICES = [{key: "erc", label: "Energy Release Component (ERC)"}, {key: "bi", label: "Burning Index (BI)"}];
+async function loadCharts(f) {
+  let d = CHART_CACHE[f.slug];
+  if (!d) {
+    try { d = CHART_CACHE[f.slug] = await (await fetch(`data/fdra/${encodeURIComponent(f.slug)}.json`, {cache: "no-cache"})).json(); }
+    catch (e) { const c = $("#charts"); if (c) c.innerHTML = `<div class="muted">Charts could not load.</div>`; return; }
+  }
+  if (state.fdra !== f.key) return;
+  drawCharts(f, d);
+}
+function drawCharts(f, d) {
+  const host = $("#charts"); if (!host) return;
+  host.innerHTML = CHART_INDICES.map(ix => `<figure class="chart" data-ix="${ix.key}">
+      <figcaption><b>${esc(ix.label)}</b> <span class="muted">· ${esc(f.name)}</span></figcaption>
+      <div class="clegend">
+        <span><i class="ln obs"></i>This season (FDRA average)</span><span><i class="ln fc"></i>Forecast</span>
+        ${d.climo ? `<span><i class="ln avg"></i>Average ${esc(f.analysis_period || "")}</span><span><i class="ln max"></i>Historical max</span>` : ""}
+      </div>
+      <div class="cbox"></div></figure>`).join("");
+  host.querySelectorAll("figure.chart").forEach(fig => svgChart(fig.querySelector(".cbox"), f, d, fig.dataset.ix));
+}
+function svgChart(box, f, d, k) {
+  const W = Math.max(300, box.clientWidth), H = W < 520 ? 260 : 320;
+  const m = {l: 40, r: W < 520 ? 10 : 92, t: 10, b: 28}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const bpIdx = META.breakpoint_indices.indexOf(k);
+  const obs = (d.season || []).filter(r => r[k] != null).map(r => ({d: r.d, v: r[k], p: r[k + "_pct"]}));
+  const fc = (d.forecast || []).filter(r => r[k] != null).map(r => ({d: r.d, v: r[k], p: r[k + "_pct"]}));
+  if (!obs.length && !fc.length) { box.innerHTML = `<div class="muted">No data yet.</div>`; return; }
+  // x range
+  const last = (fc.length ? fc : obs)[(fc.length ? fc : obs).length - 1].d;
+  const yr = (obs[0] || fc[0]).d.slice(0, 4);
+  const x0 = chartRange === "year" ? new Date(yr + "-01-01T00:00:00") : new Date(new Date(last + "T00:00:00").getTime() - 96 * 864e5);
+  const x1 = chartRange === "year" ? new Date(yr + "-12-31T00:00:00") : new Date(last + "T00:00:00");
+  const tx = iso => m.l + (new Date(iso + "T00:00:00") - x0) / (x1 - x0) * iw;
+  // bands from this FDRA's breakpoints (upper value of each class)
+  const bands = bpIdx >= 0 && f.breakpoints ? f.breakpoints.map((b, i) => ({c: CLASSES[i], hi: b[k][1], lo: i ? f.breakpoints[i - 1][k][1] : 0})) : [];
+  const climo = d.climo ? d.climo.map(c => ({doy: c.doy, avg: c[k + "_avg"], max: c[k + "_max"]})) : [];
+  const allV = [...obs, ...fc].map(r => r.v).concat(bands.map(b => b.hi), climo.map(c => c.max || 0));
+  const ymax = Math.ceil(Math.max(...allV) * 1.08 / 5) * 5 || 10;
+  const ty = v => m.t + ih - v / ymax * ih;
+  let g = "";
+  // bands
+  bands.forEach((b, i) => {
+    const top = i === bands.length - 1 ? ymax : Math.min(b.hi, ymax);
+    if (b.lo >= ymax) return;
+    g += `<rect x="${m.l}" y="${ty(top)}" width="${iw}" height="${ty(b.lo) - ty(top)}" fill="${b.c.color}" opacity=".55"/>`;
+    if (m.r > 20) g += `<text class="bl" x="${m.l + iw + 6}" y="${(ty(top) + ty(b.lo)) / 2 + 4}">${esc(b.c.name)}${i < bands.length - 1 ? " ≤" + Math.round(b.hi) : " >" + Math.round(b.lo)}</text>`;
+  });
+  // grid + y ticks
+  const step = ymax > 80 ? 20 : ymax > 40 ? 10 : 5;
+  for (let v = 0; v <= ymax; v += step) g += `<line class="gl" x1="${m.l}" x2="${m.l + iw}" y1="${ty(v)}" y2="${ty(v)}"/><text class="tk" x="${m.l - 6}" y="${ty(v) + 4}" text-anchor="end">${v}</text>`;
+  // x ticks (months, or weekly in 90-day view)
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  if (chartRange === "year") months.forEach((mn, i) => { const x = tx(`${yr}-${String(i + 1).padStart(2, "0")}-01`); g += `<line class="gl v" x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + ih}"/><text class="tk" x="${x + 3}" y="${H - 8}">${W < 520 ? mn[0] : mn}</text>`; });
+  else for (let t = new Date(x0); t <= x1; t = new Date(t.getTime() + (W < 520 ? 28 : 14) * 864e5)) { const iso = t.toISOString().slice(0, 10), x = tx(iso); g += `<line class="gl v" x1="${x}" x2="${x}" y1="${m.t}" y2="${m.t + ih}"/><text class="tk" x="${x + 3}" y="${H - 8}">${months[t.getMonth()]} ${t.getDate()}</text>`; }
+  const vis = r => { const t = new Date(r.d + "T00:00:00"); return t >= x0 && t <= x1; };
+  const path = pts => pts.map((p, i) => `${i ? "L" : "M"}${tx(p.d).toFixed(1)},${ty(p.v).toFixed(1)}`).join("");
+  // climatology lines (when the history file exists)
+  if (climo.length) {
+    const doyIso = doy => new Date(new Date(yr + "-01-01T00:00:00").getTime() + (doy - 1) * 864e5).toISOString().slice(0, 10);
+    const cl = key => path(climo.filter(c => c[key] != null).map(c => ({d: doyIso(c.doy), v: c[key]})).filter(vis));
+    g += `<path class="l-avg" d="${cl("avg")}"/><path class="l-max" d="${cl("max")}"/>`;
+  }
+  const o = obs.filter(vis), f2 = fc.filter(vis);
+  if (o.length) g += `<path class="l-obs" d="${path(o)}"/>`;
+  if (f2.length) g += `<path class="l-fc" d="${path(o.length ? [o[o.length - 1], ...f2] : f2)}"/>` + f2.map(p => `<circle class="dot-fc" cx="${tx(p.d)}" cy="${ty(p.v)}" r="2.5"/>`).join("");
+  if (o.length) { const p = o[o.length - 1]; g += `<circle class="dot-now" cx="${tx(p.d)}" cy="${ty(p.v)}" r="4.5"/>`; }
+  g += `<line class="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" style="display:none"/><rect class="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  box.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="${esc(k.toUpperCase())} this season with fire danger bands">${g}</svg><div class="ctip" hidden></div>`;
+  // hover tooltip
+  const svg = box.querySelector("svg"), xh = svg.querySelector(".xh"), tip = box.querySelector(".ctip");
+  const pts = [...o.map(p => ({...p, f: false})), ...f2.map(p => ({...p, f: true}))];
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+    let best = null, bd = 1e9; pts.forEach(p => { const dd = Math.abs(tx(p.d) - cx); if (dd < bd) { bd = dd; best = p; } });
+    if (!best || bd > 30) { xh.style.display = "none"; tip.hidden = true; return; }
+    const x = tx(best.d), c = classForPct(best.p);
+    xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.style.display = "";
+    tip.innerHTML = `<b>${esc(dayLabel(best.d))}</b>${best.f ? " · forecast" : ""}<br>${k.toUpperCase()} ${fmtNum(best.v, 1)} · ${best.p == null ? "—" : best.p + "%"}${c ? ` <span class="tsw" style="background:${c.color}"></span>${esc(c.name)}` : ""}`;
+    tip.hidden = false;
+    const tw = tip.offsetWidth; tip.style.left = Math.min(Math.max(0, x - tw / 2), W - tw) + "px"; tip.style.top = Math.max(0, ty(best.v) - 58) + "px";
+  };
+  svg.addEventListener("mousemove", move); svg.addEventListener("touchstart", move, {passive: true}); svg.addEventListener("touchmove", move, {passive: true});
+  svg.addEventListener("mouseleave", () => { xh.style.display = "none"; tip.hidden = true; });
+}
+let _chartResize;
+window.addEventListener("resize", () => { clearTimeout(_chartResize); _chartResize = setTimeout(() => { const f = FDRA[state.fdra]; if (f && CHART_CACHE[f.slug]) drawCharts(f, CHART_CACHE[f.slug]); }, 200); });
 
 /* ---------------- station drawer ---------------- */
 async function openStation(id) {
@@ -674,6 +802,8 @@ async function openStation(id) {
 
 /* ---------------- events ---------------- */
 document.addEventListener("click", e => {
+  const rb = e.target.closest("[data-range]");
+  if (rb) { chartRange = rb.dataset.range; document.querySelectorAll("[data-range]").forEach(b => b.setAttribute("aria-pressed", b === rb)); const f = FDRA[state.fdra]; if (f && CHART_CACHE[f.slug]) drawCharts(f, CHART_CACHE[f.slug]); return; }
   const t = e.target.closest("[data-overview],[data-zonetab],[data-zone],[data-fdra],[data-station],[data-edit]");
   if (!e.target.closest("#zoneMenu,[data-zonetab]")) closeZoneMenu();
   if (!t) return;
