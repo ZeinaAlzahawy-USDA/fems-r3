@@ -1,0 +1,66 @@
+name: Website Build + Deploy
+
+# Runs after any data workflow finishes, so the site always shows the newest release files.
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "FEMS Obs Hourly (NM+AZ)"
+      - "FEMS Obs Daily MinMax (NM+AZ)"
+      - "FEMS Forecast Pull (NM+AZ)"
+    types: [completed]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Own group: never blocks or waits on the fems-data pipeline
+concurrency:
+  group: website
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install pandas numpy
+
+      - name: Download release files (small ones only)
+        run: |
+          gh release download obs-history -D data --clobber \
+            -p history_daily_nfdrminmax.csv -p history_daily_weatherminmax.csv \
+            -p history_hourly_weather.csv -p obs_nfdr_daily_fdra.csv
+          gh release download forecast-data -D data --clobber \
+            -p history_forecast_daily_nfdr.csv -p history_forecast_daily_weather.csv
+
+      - name: Build website data
+        run: python scripts/build_web_data.py
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
