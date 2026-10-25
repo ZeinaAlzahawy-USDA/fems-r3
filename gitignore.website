@@ -1,0 +1,4 @@
+data/history_*.csv
+data/30days_*.csv
+data/obs_nfdr_daily_fdra.csv
+site/data/
