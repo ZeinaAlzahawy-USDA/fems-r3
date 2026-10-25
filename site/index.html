@@ -1,1 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Southwest Fire Danger</title>
+<meta name="description" content="Fire danger by FDRA for Arizona and New Mexico, from FEMS data.">
+<link rel="stylesheet" href="https://js.arcgis.com/4.30/esri/themes/light/main.css">
+<style>
+/* =====================================================================
+   SETTINGS — the only part you normally edit
+   ===================================================================== */
+</style>
+<script>
+window.APP_CONFIG = {
+  // NIFC ArcGIS Online org (editor sign-in goes here)
+  portalUrl: "https://nifc.maps.arcgis.com",
+  // OAuth Client ID from the ArcGIS app item (leave "" until created — sign-in stays hidden)
+  oauthClientId: "",
+  // Group whose members may edit ratings (group item id). "" = any signed-in user who can edit the table.
+  editorsGroupId: "",
+  // Hosted TABLE that stores the official ratings (…/FeatureServer/0). "" = calculated ratings only.
+  ratingsTableUrl: "",
+  ratingsFields: { key: "FDRA_ZONE", rating: "Rating", note: "Note" },
+  // Optional FDRA polygon layer (…/FeatureServer/0) and the field holding values like "FDZ Mogollon Rim"
+  fdraLayerUrl: "",
+  fdraKeyField: "FDRA_ZONE",
+  // US states layer (Esri Living Atlas, public)
+  statesLayerUrl: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_States_Generalized/FeatureServer/0",
+  focusStates: ["AZ", "NM"],
+  // Zone names shown on the tabs (code → label). Add the full names when you have them.
+  zoneNames: { ABZ: "ABZ", FDZ: "FDZ", GLZ: "GLZ", PIFC: "PIFC", TDZ: "TDZ", WAZ: "WAZ", WDZ: "WDZ" },
+  dataUrl: "data/meta.json"
+};
+</script>
+<style>
+:root{
+  --bg:#f4f3ef; --surface:#ffffff; --surface-2:#f8f7f4; --line:#dcd9d2; --line-strong:#9b978e;
+  --ink:#1b1a17; --ink-2:#55524b; --ink-3:#7d796f; --accent:#7a2e12; --accent-ink:#ffffff;
+  --tab:#ebe8e1; --focus:#2a78d6; --shadow:0 1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.05);
+  --cls-ink:#1b1a17;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141412; --surface:#1d1c1a; --surface-2:#242320; --line:#36342f; --line-strong:#6b675e;
+    --ink:#f0efec; --ink-2:#c3c2b7; --ink-3:#98958b; --accent:#e0794e; --accent-ink:#1b1a17;
+    --tab:#2a2925; --focus:#3987e5; --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141412; --surface:#1d1c1a; --surface-2:#242320; --line:#36342f; --line-strong:#6b675e;
+  --ink:#f0efec; --ink-2:#c3c2b7; --ink-3:#98958b; --accent:#e0794e; --accent-ink:#1b1a17;
+  --tab:#2a2925; --focus:#3987e5; --shadow:none;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.wrap{max-width:1500px;margin:0 auto;padding:0 16px}
 
+/* header */
+header.top{background:var(--surface);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:16px;padding-top:12px;padding-bottom:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand .mark{width:30px;height:30px;border-radius:7px;background:var(--accent);display:grid;place-items:center;flex:none}
+.brand h1{font-size:18px;margin:0;letter-spacing:.1px}
+.brand .sub{font-size:12.5px;color:var(--ink-3)}
+.top .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13.5px}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.user-chip{font-size:13px;color:var(--ink-2)}
+
+/* zone tabs */
+nav.zones{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.zones .wrap{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin;padding-top:8px}
+.ztab{flex:none;border:1px solid var(--line);border-bottom:none;background:var(--tab);padding:8px 16px;border-radius:7px 7px 0 0;cursor:pointer;font-weight:600;font-size:14px;color:var(--ink-2);display:flex;gap:8px;align-items:center}
+.ztab .count{font-weight:500;font-size:12px;color:var(--ink-3)}
+.ztab[aria-selected="true"]{background:var(--bg);color:var(--ink);border-color:var(--line-strong);position:relative;top:1px}
+.ztab .dot{width:10px;height:10px;border-radius:50%;border:1px solid rgba(0,0,0,.25)}
+
+/* FDRA chips */
+.fdra-bar{display:flex;gap:8px;flex-wrap:wrap;padding:14px 0 10px;align-items:center}
+.fdra-bar .lbl{font-size:12.5px;color:var(--ink-3);margin-right:4px;text-transform:uppercase;letter-spacing:.6px}
+.chip{display:flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px 5px 6px;cursor:pointer;font-size:13.5px}
+.chip:hover{border-color:var(--line-strong)}
+.chip[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.chip .sw{width:16px;height:16px;border-radius:50%;border:1px solid rgba(0,0,0,.25)}
+
+/* map */
+.map-card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+#map{height:clamp(340px,55vh,640px);width:100%}
+.map-tools{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:5}
+.map-tools .btn{box-shadow:var(--shadow)}
+.map-legend{position:absolute;left:12px;bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:5;box-shadow:var(--shadow);max-width:calc(100% - 24px)}
+.map-legend .row{display:flex;gap:10px;flex-wrap:wrap}
+.map-legend .it{display:flex;gap:5px;align-items:center}
+.map-legend .sw{width:12px;height:12px;border-radius:50%;border:1px solid rgba(0,0,0,.3)}
+.map-msg{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;color:var(--ink-2);background:var(--surface-2)}
+.map-msg.show{display:grid}
+
+/* intro line */
+.source{font-size:13px;color:var(--ink-2);text-align:center;padding:16px 8px 4px;border-top:2px solid var(--line-strong);margin-top:18px}
+.source strong{color:var(--ink)}
+
+/* FDRA report sections */
+section.fdra{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:14px 0;box-shadow:var(--shadow)}
+section.fdra.focus{border-color:var(--ink)}
+.fdra-head{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;cursor:pointer;flex-wrap:wrap}
+.fdra-head h2{font-size:19px;margin:0;display:flex;gap:8px;align-items:center}
+.fdra-head .caret{display:inline-block;transition:transform .15s;font-size:13px;color:var(--ink-3)}
+section.fdra:not(.open) .caret{transform:rotate(-90deg)}
+.fdra-head .meta{font-size:13px;color:var(--ink-2);flex-basis:100%;padding-left:21px}
+.fdra-head .meta button.st{border:none;background:none;padding:0;color:var(--focus);cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-size:13px}
+.rating-box{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:13px}
+.badge{display:inline-flex;align-items:center;gap:6px;border-radius:5px;padding:3px 10px;font-weight:700;color:var(--cls-ink);font-size:13.5px;border:1px solid rgba(0,0,0,.12)}
+.badge small{font-weight:500;opacity:.8}
+.fdra-body{display:none;padding:0 16px 16px}
+section.fdra.open .fdra-body{display:block}
+.legend{display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:center;margin:4px 0 12px;font-size:13px}
+.legend .lab{color:var(--ink-2);margin-right:4px}
+.legend .cls{padding:3px 9px;border-radius:4px;color:var(--cls-ink);border:1px solid rgba(0,0,0,.1)}
+.legend .cls b{font-weight:600}
+
+.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:8px}
+table.rep{border-collapse:separate;border-spacing:0;width:100%;min-width:980px;font-size:14px;font-variant-numeric:tabular-nums}
+table.rep th,table.rep td{padding:6px 8px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+table.rep thead th{background:var(--surface-2);font-size:12.5px;color:var(--ink-2);font-weight:700;letter-spacing:.3px}
+table.rep thead tr.grp th{font-size:14px;color:var(--ink);font-weight:600;letter-spacing:.5px}
+table.rep .gsep{border-left:2px solid var(--line-strong)}
+table.rep th.period{position:sticky;left:0;z-index:2;background:var(--surface);text-align:left;min-width:150px}
+table.rep th.period b{display:block;font-size:14.5px;color:var(--ink)}
+table.rep th.period span{font-size:12px;color:var(--ink-3);font-weight:500}
+table.rep th.period em{font-style:normal;font-size:11px;color:var(--ink-3);display:block}
+table.rep td.kind{color:var(--ink-3);font-size:12.5px;text-align:right}
+table.rep td.pct{color:var(--cls-ink);font-size:13px}
+table.rep td.fd{font-weight:700;color:var(--cls-ink);min-width:96px}
+table.rep tr.block-start th, table.rep tr.block-start td{border-top:2px solid var(--line-strong)}
+table.rep td.na{color:var(--ink-3)}
+
+.under{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;align-items:flex-start}
+.bp h3{font-size:14px;margin:0 0 6px}
+table.bpt{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+table.bpt th,table.bpt td{padding:4px 12px;text-align:center;border-bottom:1px solid var(--line)}
+table.bpt th{color:var(--ink-2);font-size:12.5px}
+table.bpt td{color:var(--cls-ink)}
+.footnote{font-size:12px;color:var(--ink-3);margin-top:8px}
+
+/* station drawer */
+.drawer{position:fixed;right:16px;bottom:16px;width:min(420px,calc(100vw - 32px));max-height:min(80vh,640px);overflow:auto;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.18);z-index:50;display:none}
+.drawer.show{display:block}
+.drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface)}
+.drawer h3{margin:0;font-size:16px}
+.drawer .x{margin-left:auto;border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--ink-2)}
+.drawer .body{padding:12px 14px;font-size:13.5px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px}
+.kv dt{color:var(--ink-3)}
+.kv dd{margin:0;font-variant-numeric:tabular-nums}
+.drawer h4{font-size:12.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-3);margin:14px 0 6px}
+.mini{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.mini th,.mini td{padding:3px 5px;text-align:right;border-bottom:1px solid var(--line)}
+.mini th:first-child,.mini td:first-child{text-align:left}
+.fmsel{display:flex;gap:4px;margin-bottom:6px}
+.fmsel button{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:2px 9px;cursor:pointer;font-size:12.5px}
+.fmsel button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+
+/* editor dialog */
+dialog{border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);color:var(--ink);padding:0;width:min(420px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+dialog form{padding:16px}
+dialog h3{margin:0 0 10px;font-size:16px}
+dialog label{display:block;font-size:13px;color:var(--ink-2);margin:10px 0 4px}
+dialog select,dialog textarea{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink)}
+dialog .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:8px;font-size:13.5px;z-index:60;display:none}
+.toast.show{display:block}
+
+footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40px}
+
+@media (max-width:700px){
+  .brand h1{font-size:16px}
+  .top .right .user-chip{display:none}
+  #map{height:52vh}
+  .fdra-head h2{font-size:17px}
+  .rating-box{margin-left:21px}
+  .drawer{right:0;left:0;bottom:0;width:100%;border-radius:14px 14px 0 0;max-height:75vh}
+  table.rep th.period{min-width:112px;padding-left:6px}
+  table.rep th.period em{display:none}
+  .map-tools{flex-direction:row;top:auto;bottom:12px;right:12px;left:auto}
+  .map-legend{bottom:auto;top:12px}
+  .map-tools .btn{padding:5px 8px;font-size:12.5px}
+  table.bpt td,table.bpt th{white-space:nowrap;padding:4px 8px}
+}
+@media (min-width:1900px){ .wrap{max-width:1800px} #map{height:62vh} }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-6 1-9.5Z" fill="#fff"/></svg>
+      </div>
+      <div>
+        <h1>Southwest Fire Danger — Arizona &amp; New Mexico</h1>
+        <div class="sub" id="lastFetched">Loading data…</div>
+      </div>
+    </div>
+    <div class="right">
+      <span class="user-chip" id="userChip"></span>
+      <button class="btn" id="signInBtn" hidden>Editor sign in</button>
+      <button class="btn" id="signOutBtn" hidden>Sign out</button>
+    </div>
+  </div>
+</header>
+
+<nav class="zones" aria-label="Zones">
+  <div class="wrap" role="tablist" id="zoneTabs"></div>
+</nav>
+
+<main class="wrap">
+  <div class="fdra-bar" id="fdraBar"></div>
+
+  <div class="map-card">
+    <div id="map" role="application" aria-label="Map of FDRAs and weather stations"></div>
+    <div class="map-tools">
+      <button class="btn" id="btnZone">Zoom to zone</button>
+      <button class="btn" id="btnRegion">AZ &amp; NM</button>
+      <button class="btn" id="btnUS">Full US</button>
+    </div>
+    <div class="map-legend" id="mapLegend"></div>
+    <div class="map-msg" id="mapMsg"><div>The map could not load right now.<br>The fire danger tables below still work.</div></div>
+  </div>
+
+  <p class="source" id="sourceLine"></p>
+  <div id="reports"></div>
+</main>
+
+<aside class="drawer" id="drawer" aria-live="polite">
+  <header><div><h3 id="dTitle"></h3><div class="sub" id="dSub" style="font-size:12.5px;color:var(--ink-3)"></div></div><button class="x" id="dClose" aria-label="Close">×</button></header>
+  <div class="body" id="dBody"></div>
+</aside>
+
+<dialog id="editDlg">
+  <form method="dialog" id="editForm">
+    <h3 id="editTitle">Set fire danger rating</h3>
+    <div class="sub" id="editCalc" style="font-size:13px;color:var(--ink-2)"></div>
+    <label for="editRating">Official rating</label>
+    <select id="editRating"></select>
+    <label for="editNote">Note (optional)</label>
+    <textarea id="editNote" rows="2" maxlength="250"></textarea>
+    <div class="acts">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" id="editSave" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<footer>Fuel and weather data from FEMS. Percentiles use each FDRA's historical analysis period. Calculated ratings are a guide; the official rating is set by authorized editors.</footer>
+
+<script>
+(() => {
+const CFG = window.APP_CONFIG;
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtNum = (v, d = 0) => v == null ? "—" : Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+const DEC = {gsi: 2, precip: 2};
+
+let META, CLASSES, BY_ZONE = {}, FDRA = {}, STATIONS = {};
+let ratings = {};          // FDRA_ZONE -> {rating, note, oid, edited}
+let auth = {token: null, user: null, canEdit: false};
+let state = {zone: null, fdra: null};
+let mapApi = null;         // filled when the Esri map loads
+
+function classForPct(p) {
+  if (p == null) return null;
+  return CLASSES.find(c => p >= c.min && p <= c.max) || (p > 100 ? CLASSES[CLASSES.length - 1] : CLASSES[0]);
+}
+function classByName(n) { return CLASSES.find(c => c.name.toLowerCase() === String(n || "").toLowerCase()); }
+function dayLabel(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T12:00:00");
+  return d.toLocaleDateString("en-US", {weekday: "short"}) + " - " + d.toLocaleDateString("en-US", {month: "short", day: "numeric"});
+}
+function calcDanger(f) {   // calculated rating for "Today"
+  const today = f.report.find(r => r.label === "Today")?.values || f.report[0]?.values;
+  const p = today ? today[META.fire_danger_index + "_pct"] : null;
+  return {cls: classForPct(p), pct: p};
+}
+function currentDanger(f) { // official if set, else calculated
+  const r = ratings[f.key];
+  const off = r && classByName(r.rating);
+  if (off) return {cls: off, official: true, note: r.note};
+  return {...calcDanger(f), official: false};
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3200); }
+
+/* ---------------- data ---------------- */
+async function loadData() {
+  const res = await fetch(CFG.dataUrl, {cache: "no-cache"});
+  if (!res.ok) throw new Error("data " + res.status);
+  META = await res.json();
+  CLASSES = META.classes;
+  META.fdras.forEach(f => { FDRA[f.key] = f; (BY_ZONE[f.zone] ||= []).push(f); });
+  Object.values(BY_ZONE).forEach(a => a.sort((a, b) => a.name.localeCompare(b.name)));
+  META.stations.forEach(s => STATIONS[s.id] = s);
+  const g = new Date(META.generated_utc);
+  $("#lastFetched").textContent = "FEMS data last processed: " + g.toLocaleString("en-US", {hour: "numeric", minute: "2-digit", timeZoneName: "short", weekday: "long", month: "long", day: "numeric", year: "numeric"});
+  $("#sourceLine").innerHTML = `Fuel and weather data is sourced from <strong>FEMS</strong>. Percentiles are based on each FDRA's historical period. Observed through <strong>${esc(dayLabel(META.latest_obs_date))}</strong>; forecast issued ${esc(META.forecast_pull_mst)} MST.`;
+}
+
+async function loadRatings() {
+  if (!CFG.ratingsTableUrl) return;
+  const F = CFG.ratingsFields;
+  try {
+    const p = new URLSearchParams({where: "1=1", outFields: "*", f: "json"});
+    if (auth.token) p.set("token", auth.token);
+    const j = await (await fetch(CFG.ratingsTableUrl + "/query?" + p)).json();
+    if (j.error) throw new Error(j.error.message);
+    ratings = {};
+    const oidField = j.objectIdFieldName || "OBJECTID";
+    (j.features || []).forEach(ft => {
+      const a = ft.attributes;
+      if (a[F.key]) ratings[String(a[F.key]).trim()] = {rating: a[F.rating], note: a[F.note], oid: a[oidField], edited: a.EditDate, editor: a.Editor};
+    });
+  } catch (e) { console.warn("Ratings table not readable:", e.message); }
+}
+
+/* ---------------- tabs + chips ---------------- */
+function zoneWorst(z) {
+  let worst = null;
+  BY_ZONE[z].forEach(f => { const c = currentDanger(f).cls; if (c && (!worst || CLASSES.indexOf(c) > CLASSES.indexOf(worst))) worst = c; });
+  return worst;
+}
+function renderTabs() {
+  const zones = Object.keys(BY_ZONE).sort();
+  $("#zoneTabs").innerHTML = zones.map(z => {
+    const w = zoneWorst(z);
+    return `<button class="ztab" role="tab" data-zone="${esc(z)}" aria-selected="${z === state.zone}">
+      <span class="dot" style="background:${w ? w.color : "transparent"}" title="${w ? "Highest: " + esc(w.name) : ""}"></span>
+      ${esc(CFG.zoneNames[z] || z)} <span class="count">${BY_ZONE[z].length}</span></button>`;
+  }).join("");
+}
+function renderChips() {
+  const list = BY_ZONE[state.zone] || [];
+  $("#fdraBar").innerHTML = `<span class="lbl">${esc(CFG.zoneNames[state.zone] || state.zone)} FDRAs</span>` + list.map(f => {
+    const d = currentDanger(f);
+    return `<button class="chip" data-fdra="${esc(f.key)}" aria-pressed="${f.key === state.fdra}">
+      <span class="sw" style="background:${d.cls ? d.cls.color : "transparent"}"></span>${esc(f.name)}</button>`;
+  }).join("");
+}
+
+/* ---------------- report tables ---------------- */
+function reportTable(f) {
+  const cols = META.report_cols;
+  const fuels = cols.filter(c => c.group === "Fuels"), wx = cols.filter(c => c.group === "Weather");
+  const idx = META.fire_danger_index.toUpperCase();
+  let h = `<div class="tbl-scroll"><table class="rep"><thead>
+    <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
+      <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
+      <th class="gsep" rowspan="2" title="Calculated from the ${idx} percentile">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${idx} %ile)</span></th></tr>
+    <tr>${fuels.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}
+        ${wx.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}</tr>
+    </thead><tbody>`;
+  f.report.forEach((r, ri) => {
+    const v = r.values || {};
+    const days = r.days || [];
+    const sub = days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
+    const dcls = classForPct(v[META.fire_danger_index + "_pct"]);
+    const start = ri === 3 ? " block-start" : "";
+    h += `<tr class="${start}"><th class="period" rowspan="2"><b>${esc(r.label)}</b><span>${esc(sub)}</span><em>${r.type === "F" ? "Forecast" : "Observed"}</em></th>
+      <td class="kind">Value</td>
+      ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
+      ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}">${dcls ? esc(dcls.name) : "—"}</td></tr>
+      <tr><td class="kind">Percentile</td>
+      ${fuels.map((c, i) => {
+        if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
+        const p = v[c.key + "_pct"], k = classForPct(p);
+        return `<td class="pct${i === 0 ? " gsep" : ""}" style="background:${k ? k.color : "transparent"}" title="${k ? esc(k.name) : ""}">${p == null ? "—" : p + "%"}</td>`;
+      }).join("")}</tr>`;
+  });
+  return h + "</tbody></table></div>";
+}
+function breakpointTable(f) {
+  const ix = META.breakpoint_indices;
+  return `<div class="bp"><h3>Fire Danger Breakpoints</h3><table class="bpt"><thead><tr><th>Percentile</th>${ix.map(k => `<th>${k.toUpperCase()}</th>`).join("")}<th>Fire Danger</th></tr></thead><tbody>
+    ${f.breakpoints.map((b, i) => {
+      const c = CLASSES[i];
+      return `<tr style="background:${c.color}"><td>${esc(b.range)}</td>${ix.map(k => {
+        const [lo, hi] = b[k]; return `<td>${i === 0 ? "≤ " + fmtNum(hi) : i === f.breakpoints.length - 1 ? "≥ " + fmtNum(lo) : fmtNum(lo) + " – " + fmtNum(hi)}</td>`;
+      }).join("")}<td><b>${esc(c.name)}</b></td></tr>`;
+    }).join("")}</tbody></table>
+    <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(" and ")} show dryness percentile (higher = drier)` : ""}</div></div>`;
+}
+function legendHtml() {
+  return `<div class="legend"><span class="lab">Fire Danger / Percentile legend</span>${CLASSES.map(c =>
+    `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b> (${c.min === 0 ? "<" + (c.max + 1) : c.max === 100 ? "≥" + c.min : c.min + "–" + c.max}th)</span>`).join("")}</div>`;
+}
+function ratingBox(f) {
+  const d = currentDanger(f), calc = calcDanger(f);
+  const r = ratings[f.key];
+  let html = `<span style="color:var(--ink-3)">${d.official ? "Official" : "Calculated"}</span>
+    <span class="badge" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "No data"}${!d.official && calc.pct != null ? ` <small>${calc.pct}%</small>` : ""}</span>`;
+  if (d.official && r?.note) html += `<span style="color:var(--ink-2);max-width:260px" title="${esc(r.note)}">“${esc(r.note.length > 40 ? r.note.slice(0, 40) + "…" : r.note)}”</span>`;
+  if (auth.canEdit) html += `<button class="btn" data-edit="${esc(f.key)}">Edit rating</button>`;
+  return html;
+}
+function renderReports() {
+  const list = BY_ZONE[state.zone] || [];
+  $("#reports").innerHTML = list.map(f => {
+    const st = f.sig_raws.map(id => STATIONS[id] ? `<button class="st" data-station="${esc(id)}">${esc(titleCase(STATIONS[id].name))}</button>` : esc(id)).join(", ");
+    const open = f.key === state.fdra;
+    return `<section class="fdra${open ? " open focus" : ""}" id="fdra-${esc(f.slug)}" data-key="${esc(f.key)}">
+      <div class="fdra-head" data-toggle="${esc(f.key)}">
+        <h2><span class="caret">▼</span>${esc(f.name)} FDRA</h2>
+        <div class="rating-box">${ratingBox(f)}</div>
+        <div class="meta">Reporting stations: ${st} · Zone ${esc(f.zone)}</div>
+      </div>
+      <div class="fdra-body">${open ? legendHtml() + reportTable(f) + `<div class="under">${breakpointTable(f)}</div>` : ""}</div>
+    </section>`;
+  }).join("");
+}
+function titleCase(s) { return String(s || "").toLowerCase().replace(/\b\w/g, c => c.toUpperCase()); }
+
+function openFdra(key, scroll) {
+  const sec = document.querySelector(`section.fdra[data-key="${CSS.escape(key)}"]`);
+  if (!sec) return;
+  if (!sec.classList.contains("open")) {
+    const f = FDRA[key];
+    sec.querySelector(".fdra-body").innerHTML = legendHtml() + reportTable(f) + `<div class="under">${breakpointTable(f)}</div>`;
+    sec.classList.add("open");
+  }
+  document.querySelectorAll("section.fdra.focus").forEach(s => s.classList.remove("focus"));
+  sec.classList.add("focus");
+  if (scroll) sec.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+/* ---------------- selection ---------------- */
+function selectZone(z, {zoom = true} = {}) {
+  state.zone = z;
+  state.fdra = BY_ZONE[z][0]?.key || null;
+  renderTabs(); renderChips(); renderReports(); renderLegend();
+  try { history.replaceState(null, "", "#" + encodeURIComponent(z)); } catch (e) {}
+  if (mapApi) { mapApi.refresh(); if (zoom) mapApi.zoomZone(); }
+}
+function selectFdra(key, {scroll = true, zoom = true} = {}) {
+  const f = FDRA[key]; if (!f) return;
+  if (f.zone !== state.zone) { state.zone = f.zone; renderTabs(); renderReports(); }
+  state.fdra = key;
+  renderChips(); openFdra(key, scroll);
+  try { history.replaceState(null, "", "#" + encodeURIComponent(f.zone) + "/" + encodeURIComponent(f.slug)); } catch (e) {}
+  if (mapApi) { mapApi.refresh(); if (zoom) mapApi.zoomFdra(key); }
+}
+
+function renderLegend() {
+  $("#mapLegend").innerHTML = `<div class="row">${CLASSES.map(c => `<span class="it"><span class="sw" style="background:${c.color}"></span>${esc(c.name)}</span>`).join("")}
+    <span class="it"><span class="sw" style="background:#b8b4ab"></span>Not an FDRA station</span></div>`;
+}
+
+/* ---------------- station drawer ---------------- */
+async function openStation(id) {
+  const s = STATIONS[id]; if (!s) return;
+  $("#dTitle").textContent = titleCase(s.name);
+  $("#dSub").textContent = `Station ${s.id} · ${s.wrcc} · ${s.state} · ${fmtNum(s.elev)} ft`;
+  const fms = Object.keys(s.latest).sort();
+  const fdraLinks = s.fdras.length ? s.fdras.map(k => `<button class="btn" style="padding:2px 8px;font-size:12.5px;margin:2px" data-fdra="${esc(k)}">${esc(k)}</button>`).join("") : "Not a reporting station for an FDRA";
+  const wx = s.wx;
+  $("#dBody").innerHTML = `<dl class="kv"><dt>Latitude</dt><dd>${s.lat}</dd><dt>Longitude</dt><dd>${s.lon}</dd><dt>FDRAs</dt><dd>${fdraLinks}</dd></dl>
+    ${wx ? `<h4>Latest weather · ${esc(wx.h.replace("T", " "))} LST</h4><dl class="kv">
+      <dt>Temperature</dt><dd>${fmtNum(wx.t)} °F</dd><dt>Rel. humidity</dt><dd>${fmtNum(wx.rh)} %</dd>
+      <dt>Wind</dt><dd>${fmtNum(wx.ws)} mph @ ${fmtNum(wx.wd)}° · gust ${fmtNum(wx.gs)}</dd><dt>Precip (hr)</dt><dd>${fmtNum(wx.p, 2)} in</dd><dt>VPD</dt><dd>${fmtNum(wx.vpd)}</dd></dl>` : ""}
+    <h4>Daily NFDR · fuel model</h4><div class="fmsel" id="fmSel">${fms.map(m => `<button data-fm="${m}" aria-pressed="${m === "Y"}">${m}</button>`).join("")}</div>
+    <div id="fmTable">Loading…</div>`;
+  $("#drawer").classList.add("show");
+  if (mapApi) mapApi.highlightStation(id);
+  let detail;
+  try { detail = await (await fetch(`data/stations/${encodeURIComponent(id)}.json`, {cache: "no-cache"})).json(); }
+  catch (e) { $("#fmTable").textContent = "Station details could not load."; return; }
+  const show = fm => {
+    document.querySelectorAll("#fmSel button").forEach(b => b.setAttribute("aria-pressed", b.dataset.fm === fm));
+    const obs = (detail.nfdr[fm] || []).slice(-5), fc = (detail.forecast[fm] || []).slice(0, 5);
+    const row = (r, f) => `<tr${f ? ' style="color:var(--ink-2)"' : ""}><td>${esc(dayLabel(r.d))}${f ? " (F)" : ""}</td><td>${fmtNum(r.erc)}</td><td>${fmtNum(r.bi)}</td><td>${fmtNum(r.fm100, 1)}</td><td>${fmtNum(r.fm1000, 1)}</td><td>${fmtNum(r.kbdi)}</td></tr>`;
+    $("#fmTable").innerHTML = `<table class="mini"><thead><tr><th>Day</th><th>ERC</th><th>BI</th><th>100h</th><th>1000h</th><th>KBDI</th></tr></thead>
+      <tbody>${obs.map(r => row(r, false)).join("")}${fc.map(r => row(r, true)).join("")}</tbody></table>
+      <div class="footnote">Last 5 observed days, then forecast (F). Max ERC/BI, min fuel moistures.</div>`;
+  };
+  show(fms.includes("Y") ? "Y" : fms[0]);
+  $("#fmSel").onclick = e => { const b = e.target.closest("button[data-fm]"); if (b) show(b.dataset.fm); };
+}
+
+/* ---------------- events ---------------- */
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-zone],[data-fdra],[data-station],[data-toggle],[data-edit]");
+  if (!t) return;
+  if (t.dataset.zone) return selectZone(t.dataset.zone);
+  if (t.dataset.edit) { e.stopPropagation(); return openEditor(t.dataset.edit); }
+  if (t.dataset.station) { e.stopPropagation(); return openStation(t.dataset.station); }
+  if (t.dataset.fdra) return selectFdra(t.dataset.fdra);
+  if (t.dataset.toggle) {
+    if (e.target.closest(".rating-box")) return;
+    const sec = t.closest("section.fdra");
+    if (sec.classList.contains("open") && state.fdra === t.dataset.toggle) { sec.classList.remove("open"); return; }
+    selectFdra(t.dataset.toggle, {scroll: false});
+  }
+});
+$("#dClose").onclick = () => { $("#drawer").classList.remove("show"); mapApi?.highlightStation(null); };
+$("#zoneTabs").addEventListener("keydown", e => {
+  if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+  const tabs = [...document.querySelectorAll(".ztab")], i = tabs.findIndex(t => t.dataset.zone === state.zone);
+  const n = tabs[(i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+  selectZone(n.dataset.zone); document.querySelector(`.ztab[data-zone="${n.dataset.zone}"]`).focus();
+});
+$("#btnZone").onclick = () => mapApi?.zoomZone();
+$("#btnRegion").onclick = () => mapApi?.zoomRegion();
+$("#btnUS").onclick = () => mapApi?.zoomUS();
+
+/* ---------------- editing ---------------- */
+let editingKey = null;
+function openEditor(key) {
+  const f = FDRA[key], calc = calcDanger(f), r = ratings[key];
+  editingKey = key;
+  $("#editTitle").textContent = f.name + " FDRA (" + f.zone + ")";
+  $("#editCalc").textContent = "Calculated today: " + (calc.cls ? `${calc.cls.name} (${META.fire_danger_index.toUpperCase()} ${calc.pct}%)` : "no data");
+  $("#editRating").innerHTML = `<option value="">— Use calculated rating —</option>` + CLASSES.map(c => `<option${r && classByName(r.rating) === c ? " selected" : ""}>${esc(c.name)}</option>`).join("");
+  $("#editNote").value = r?.note || "";
+  $("#editDlg").showModal();
+}
+$("#editForm").addEventListener("submit", async e => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  const F = CFG.ratingsFields, key = editingKey, r = ratings[key];
+  const attrs = {[F.key]: key, [F.rating]: $("#editRating").value || null, [F.note]: $("#editNote").value.trim() || null};
+  const body = new URLSearchParams({f: "json", token: auth.token});
+  if (r?.oid != null) body.set("updates", JSON.stringify([{attributes: {OBJECTID: r.oid, ...attrs}}]));
+  else body.set("adds", JSON.stringify([{attributes: attrs}]));
+  $("#editSave").disabled = true;
+  try {
+    const j = await (await fetch(CFG.ratingsTableUrl + "/applyEdits", {method: "POST", body})).json();
+    const res = (j.updateResults || j.addResults || [])[0];
+    if (j.error || !res?.success) throw new Error(j.error?.message || res?.error?.description || "Save was rejected");
+    await loadRatings();
+    $("#editDlg").close();
+    renderTabs(); renderChips(); renderReports(); openFdra(key, false); mapApi?.refresh();
+    toast("Rating saved for " + key);
+  } catch (err) { toast("Not saved: " + err.message); }
+  finally { $("#editSave").disabled = false; }
+});
+
+/* ---------------- sign in (ArcGIS OAuth, NIFC org) ---------------- */
+function setupAuth(esriId, OAuthInfo, Portal) {
+  if (!CFG.oauthClientId || !CFG.ratingsTableUrl) return;
+  const info = new OAuthInfo({appId: CFG.oauthClientId, portalUrl: CFG.portalUrl, popup: false, flowType: "authorization-code"});
+  esriId.registerOAuthInfos([info]);
+  const sharing = info.portalUrl + "/sharing";
+  const onSignedIn = async cred => {
+    auth.token = cred.token;
+    const portal = new Portal({url: CFG.portalUrl, authMode: "immediate"});
+    await portal.load();
+    auth.user = portal.user;
+    let ok = true;
+    if (CFG.editorsGroupId) {
+      const groups = await portal.user.fetchGroups();
+      ok = groups.some(g => g.id === CFG.editorsGroupId);
+    }
+    auth.canEdit = ok;
+    $("#userChip").textContent = (portal.user.fullName || portal.user.username) + (ok ? " · editor" : " · view only");
+    $("#signInBtn").hidden = true; $("#signOutBtn").hidden = false;
+    await loadRatings(); renderTabs(); renderChips(); renderReports(); if (state.fdra) openFdra(state.fdra, false); mapApi?.refresh();
+    if (!ok) toast("You are signed in, but not in the editors group.");
+  };
+  $("#signInBtn").hidden = false;
+  $("#signInBtn").onclick = () => esriId.getCredential(sharing).then(onSignedIn).catch(() => {});
+  $("#signOutBtn").onclick = () => { esriId.destroyCredentials(); location.reload(); };
+  esriId.checkSignInStatus(sharing).then(onSignedIn).catch(() => {});
+}
+
+/* ---------------- map (ArcGIS Maps SDK) ---------------- */
+function startMap() {
+  if (!window.require) {
+    if (document.readyState !== "complete") { window.addEventListener("load", startMap, {once: true}); return; }
+    $("#mapMsg").classList.add("show"); return;
+  }
+  window.require([
+    "esri/Map", "esri/views/MapView", "esri/layers/FeatureLayer", "esri/layers/GraphicsLayer", "esri/Graphic",
+    "esri/geometry/Extent", "esri/identity/IdentityManager", "esri/identity/OAuthInfo", "esri/portal/Portal"
+  ], (Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Extent, esriId, OAuthInfo, Portal) => {
+    setupAuth(esriId, OAuthInfo, Portal);
+    const map = new Map({basemap: "topo-vector"});
+    const view = new MapView({container: "map", map, center: [-108.6, 34.3], zoom: 6, constraints: {minZoom: 3},
+      popup: {dockEnabled: false}, ui: {components: ["zoom", "attribution"]}});
+    const focus = CFG.focusStates.map(s => `'${s}'`).join(",");
+    if (CFG.statesLayerUrl) {
+      map.add(new FeatureLayer({url: CFG.statesLayerUrl, definitionExpression: `STATE_ABBR NOT IN (${focus})`, popupEnabled: false,
+        renderer: {type: "simple", symbol: {type: "simple-fill", color: [250, 249, 246, 0.55], outline: {color: [120, 116, 108, 0.6], width: 0.6}}}}));
+      map.add(new FeatureLayer({url: CFG.statesLayerUrl, definitionExpression: `STATE_ABBR IN (${focus})`, popupEnabled: false,
+        renderer: {type: "simple", symbol: {type: "simple-fill", color: [0, 0, 0, 0], outline: {color: [40, 38, 34, 1], width: 2.4}}}}));
+    }
+    let fdraLayer = null, fdraLayerView = null, fdraHL = null;
+    const fdraPolys = new GraphicsLayer();   // colored copies of polygons, so color = official/calculated
+    if (CFG.fdraLayerUrl) {
+      fdraLayer = new FeatureLayer({url: CFG.fdraLayerUrl, outFields: [CFG.fdraKeyField], opacity: 0, popupEnabled: false});
+      map.addMany([fdraPolys, fdraLayer]);
+      view.whenLayerView(fdraLayer).then(lv => fdraLayerView = lv);
+    }
+    const stLayer = new GraphicsLayer();
+    map.add(stLayer);
+    let selSt = null;
+
+    const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    function stationColor(s) {
+      let best = null;
+      s.fdras.forEach(k => { const c = currentDanger(FDRA[k]).cls; if (c && (!best || CLASSES.indexOf(c) > CLASSES.indexOf(best))) best = c; });
+      return best;
+    }
+    function drawStations() {
+      stLayer.removeAll();
+      const zoneSt = new Set((BY_ZONE[state.zone] || []).flatMap(f => f.sig_raws));
+      const fdraSt = new Set(FDRA[state.fdra]?.sig_raws || []);
+      const gs = META.stations.map(s => {
+        const c = stationColor(s), inZone = zoneSt.has(s.id), inF = fdraSt.has(s.id), sel = s.id === selSt;
+        const col = c ? hex2rgb(c.color) : [184, 180, 171];
+        return new Graphic({
+          geometry: {type: "point", longitude: s.lon, latitude: s.lat},
+          attributes: {id: s.id},
+          symbol: {type: "simple-marker", style: "circle", size: sel ? 18 : inF ? 14 : inZone ? 11 : c ? 8 : 6,
+            color: [...col, inZone || !c ? 1 : 0.75], outline: {color: sel || inF ? [20, 20, 20, 1] : [60, 58, 52, 0.8], width: sel ? 3 : inF ? 2 : 1}},
+          popupTemplate: null
+        });
+      });
+      // draw selected-zone stations last so they sit on top
+      gs.sort((a, b) => (zoneSt.has(a.attributes.id) - zoneSt.has(b.attributes.id)) || (fdraSt.has(a.attributes.id) - fdraSt.has(b.attributes.id)));
+      stLayer.addMany(gs);
+    }
+    async function drawFdraPolys() {
+      if (!fdraLayer) return;
+      try {
+        const res = await fdraLayer.queryFeatures({where: "1=1", outFields: [CFG.fdraKeyField], returnGeometry: true, outSpatialReference: view.spatialReference});
+        fdraPolys.removeAll();
+        res.features.forEach(ft => {
+          const key = String(ft.attributes[CFG.fdraKeyField] || "").trim(), f = FDRA[key];
+          if (!f) return;
+          const c = currentDanger(f).cls, inZone = f.zone === state.zone, sel = key === state.fdra;
+          fdraPolys.add(new Graphic({geometry: ft.geometry, attributes: {key},
+            symbol: {type: "simple-fill", color: c ? [...hex2rgb(c.color), inZone ? 0.75 : 0.35] : [0, 0, 0, 0],
+              outline: {color: sel ? [20, 20, 20, 1] : [70, 66, 60, inZone ? 0.9 : 0.4], width: sel ? 3 : inZone ? 1.2 : 0.6}}}));
+        });
+      } catch (e) { console.warn("FDRA layer:", e.message); }
+    }
+    function extentOf(ids) {
+      const pts = ids.map(id => STATIONS[id]).filter(Boolean);
+      if (!pts.length) return null;
+      const xs = pts.map(p => p.lon), ys = pts.map(p => p.lat), pad = 0.35;
+      return new Extent({xmin: Math.min(...xs) - pad, ymin: Math.min(...ys) - pad, xmax: Math.max(...xs) + pad, ymax: Math.max(...ys) + pad, spatialReference: {wkid: 4326}});
+    }
+    async function zoomKeys(keys) {
+      if (fdraLayer) {
+        try {
+          const where = `${CFG.fdraKeyField} IN (${keys.map(k => "'" + k.replace(/'/g, "''") + "'").join(",")})`;
+          const r = await fdraLayer.queryExtent({where});
+          if (r.count) return view.goTo(r.extent.expand(1.2));
+        } catch (e) {}
+      }
+      const ex = extentOf(keys.flatMap(k => FDRA[k].sig_raws));
+      if (ex) view.goTo(ex.expand(1.4)).catch(() => {});
+    }
+
+    view.on("click", async evt => {
+      const hit = await view.hitTest(evt);
+      const st = hit.results.find(r => r.graphic?.layer === stLayer);
+      if (st) { const id = st.graphic.attributes.id; selSt = id; drawStations(); const s = STATIONS[id]; if (s.fdras[0] && !s.fdras.includes(state.fdra)) selectFdra(s.fdras.find(k => FDRA[k].zone === state.zone) || s.fdras[0], {zoom: false}); openStation(id); return; }
+      const poly = hit.results.find(r => r.graphic?.layer === fdraPolys);
+      if (poly) selectFdra(poly.graphic.attributes.key, {zoom: false});
+    });
+    view.on("pointer-move", async evt => {
+      const hit = await view.hitTest(evt, {include: [stLayer, fdraPolys]});
+      view.container.style.cursor = hit.results.length ? "pointer" : "default";
+    });
+
+    mapApi = {
+      refresh() { drawStations(); drawFdraPolys(); },
+      zoomZone() { zoomKeys((BY_ZONE[state.zone] || []).map(f => f.key)); },
+      zoomFdra(k) { zoomKeys([k]); },
+      zoomRegion() { view.goTo({center: [-108.6, 34.3], zoom: 6}); },
+      zoomUS() { view.goTo({center: [-97, 38.5], zoom: 4}); },
+      highlightStation(id) { selSt = id; drawStations(); }
+    };
+    view.when(() => { mapApi.refresh(); mapApi.zoomZone(); }, () => $("#mapMsg").classList.add("show"));
+  }, () => $("#mapMsg").classList.add("show"));
+}
+
+/* ---------------- start ---------------- */
+(async () => {
+  try { await loadData(); }
+  catch (e) { $("#lastFetched").textContent = "Data could not load. Try again in a few minutes."; return; }
+  await loadRatings();
+  const [hz, hf] = decodeURIComponent(location.hash.slice(1)).split("/");
+  const zones = Object.keys(BY_ZONE).sort();
+  state.zone = BY_ZONE[hz] ? hz : zones[0];
+  state.fdra = (hf && BY_ZONE[state.zone].find(f => f.slug === hf)?.key) || BY_ZONE[state.zone][0].key;
+  renderTabs(); renderChips(); renderReports(); renderLegend();
+  startMap();
+})();
+})();
+</script>
+<script src="https://js.arcgis.com/4.30/" onerror="document.getElementById('mapMsg').classList.add('show')"></script>
+</body>
+</html>
