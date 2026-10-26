@@ -284,7 +284,19 @@ def sync_history(path, df_new, timestamp_col):
 
     if not combined.empty:
         sort_times = build_dt(combined)
-        combined = combined.assign(_sort=sort_times).sort_values("_sort").drop(columns="_sort")
+        combined = combined.assign(_sort=sort_times)
+
+        # Remove repeated copies of the same reading (same station, observation time, type and fuel model),
+        # keeping the newest pull. Without this, older rows outside the re-sync window keep their duplicates forever.
+        key = ["_sort"] + [c for c in ("station_id", "observation_type", "nfdr_type", "fuel_model") if c in combined.columns]
+        if "pull_date" in combined.columns:
+            combined = combined.sort_values("pull_date", kind="stable", na_position="first")
+        has_time = combined["_sort"].notna()
+        before = len(combined)
+        combined = pd.concat([combined[has_time].drop_duplicates(subset=key, keep="last"), combined[~has_time]])
+        print(f"{os.path.basename(path)}: removed {before - len(combined)} duplicate rows")
+
+        combined = combined.sort_values("_sort").drop(columns="_sort")
 
     combined.to_csv(path, index=False)
     print(f"{os.path.basename(path)}: total rows now {len(combined)}")
