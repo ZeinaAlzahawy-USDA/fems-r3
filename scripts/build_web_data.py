@@ -359,8 +359,8 @@ def main():
             ("Yesterday", nfdr, wxd, obs_days[-1:]),
             ("Today", fc, fwx, [today] if today else []),
             ("Tomorrow", fc, fwx, future[:1]),
-            ("5-Day Average", nfdr, wxd, obs_days[-5:]),            # last 5 observed days
-            ("5-Day Outlook", fc, fwx, ([today] if today else []) + future[:4]),   # today + next 4 days
+            ("5-Day Observed", nfdr, wxd, obs_days[-5:]),            # average of the last 5 observed days
+            ("5-Day Forecast", fc, fwx, ([today] if today else []) + future[:4]),   # average of today + next 4 forecast days
         ]:
             report.append({"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                            "values": day_values(nf, wx, days) if days else None})
