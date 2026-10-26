@@ -141,10 +141,27 @@ table.rep td.fd{font-weight:700;color:var(--cls-ink);min-width:96px}
 table.rep tr.block-start th, table.rep tr.block-start td{border-top:2px solid var(--line-strong)}
 table.rep td.na{color:var(--ink-3)}
 
-.under{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;align-items:flex-start}
+.under{margin-top:16px}
 .bp h3{font-size:14px;margin:0 0 6px}
-.under .bp{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.under{min-width:0}
+.under .bp{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;min-width:0}
+/* same grid as the season charts below, so Breakpoints lines up with ERC and Matrix with BI */
+.under{display:grid;grid-template-columns:1fr;gap:18px;align-items:stretch}
+@media (min-width:1150px){.under{grid-template-columns:1fr 1fr}.under .bp.rs{grid-column:1 / -1}}
+.under table.bpt th,.under table.bpt td{padding:5px 8px}
+@media (min-width:1150px) and (max-width:1399px){.under table.bpt th,.under table.bpt td{padding:4px 4px;font-size:12px;letter-spacing:-.1px}.under .bp{padding:12px 10px}}
+.under table.bpt td,.under table.bpt th{white-space:nowrap}
+.under .bp table.bpt{width:100%}
+.under .bp{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+table.bpt.mtx td.now{outline:3px solid var(--ink);outline-offset:-3px}
+.nowkey{display:inline-block;width:12px;height:12px;border:3px solid var(--ink);border-radius:2px;vertical-align:-2px;margin-left:6px}
+table.rst th{font-size:12.5px}
+table.rst tbody th{text-align:left;color:var(--ink);font-weight:600;white-space:nowrap}
+
+table.rst thead th span{display:block;font-size:11px;color:var(--ink-3);font-weight:500}
+table.rst td.rs-c{color:var(--cls-ink);border:2px solid var(--surface-2);padding:6px 10px}
+table.rst td.rs-c .rs-n{display:block;font-weight:700;font-size:13.5px}
+table.rst tr.rs-total td{padding:9px 10px;font-size:14px}
+
 table.bpt{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
 table.bpt th,table.bpt td{padding:4px 12px;text-align:center;border-bottom:1px solid var(--line)}
 table.bpt th{color:var(--ink-2);font-size:12.5px}
@@ -317,7 +334,7 @@ footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40p
       <button class="btn" id="btnUS">Full US</button>
     </div>
     <div class="map-legend" id="mapLegend"></div>
-    <div class="map-msg" id="mapMsg"><div>The map could not load right now.<br>The fire danger tables below still work.</div></div>
+    <div class="map-msg" id="mapMsg"><div>The map is temporarily unavailable.<br>Fire danger tables remain available below.</div></div>
   </div>
 
   <p class="source" id="sourceLine"></p>
@@ -346,7 +363,7 @@ footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40p
 </dialog>
 <div class="toast" id="toast"></div>
 
-<footer>Fuel and weather data from FEMS. Percentiles use each FDRA's historical analysis period. Calculated ratings are a guide; the official rating is set by authorized editors.</footer>
+<footer>Fuel and weather data from FEMS. Percentiles use each FDRA's historical analysis period. Calculated ratings are provided for reference; official ratings are set by authorized editors.</footer>
 
 <script>
 (() => {
@@ -390,6 +407,10 @@ function currentDanger(f) { // official if set, else calculated
   if (off) return {cls: off, official: true, note: r.note};
   return {...calcDanger(f), official: false};
 }
+function fmtMst(t) {   // "2026-10-25 00:20:50" -> "Oct 25, 12:20 AM"
+  const d = new Date(String(t || "").replace(" ", "T"));
+  return isNaN(d) ? String(t || "") : d.toLocaleString("en-US", {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+}
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3200); }
 
 /* ---------------- data ---------------- */
@@ -424,7 +445,7 @@ async function loadData() {
   META.stations.forEach(s => STATIONS[s.id] = s);
   const g = new Date(META.generated_utc);
   $("#lastFetched").textContent = "FEMS data last processed: " + g.toLocaleString("en-US", {hour: "numeric", minute: "2-digit", timeZoneName: "short", weekday: "long", month: "long", day: "numeric", year: "numeric"});
-  $("#sourceLine").innerHTML = `Fuel and weather data is sourced from <strong>FEMS</strong>. Percentiles are based on each FDRA's historical period. Observed through <strong>${esc(dayLabel(META.latest_obs_date))}</strong>; forecast issued ${esc(META.forecast_pull_mst)} MST.`;
+  $("#sourceLine").innerHTML = `Fuel and weather data is sourced from <strong>FEMS</strong>. Percentiles are based on each FDRA's historical period. Observed through <strong>${esc(dayLabel(META.latest_obs_date))}</strong>; forecast issued ${esc(fmtMst(META.forecast_pull_mst))} MST.`;
 }
 
 async function loadRatings() {
@@ -517,7 +538,7 @@ function reportTable(f) {
   let h = `<div class="tbl-scroll"><table class="rep"><thead>
     <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
       <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
-      <th class="gsep" rowspan="2" title="${META.fire_danger_method === "matrix" ? "VPD class × SFDI class matrix (Kaibab FDOP method)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(fdMethodLabel())})</span></th></tr>
+      <th class="gsep" rowspan="2" title="${META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(fdMethodLabel())})</span></th></tr>
     <tr>${fuels.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}
         ${wx.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}</tr>
     </thead><tbody>`;
@@ -531,7 +552,7 @@ function reportTable(f) {
       <td class="kind">Value</td>
       ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD/SFDI missing)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>by ERC</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
@@ -547,20 +568,34 @@ function breakpointTable(f) {
     ${f.breakpoints.map((b, i) => {
       const c = CLASSES[i];
       return `<tr style="background:${c.color}"><td>${esc(b.range)}</td>${ix.map(k => {
-        const [lo, hi] = b[k]; return `<td>${i === 0 ? "≤ " + fmtNum(hi) : i === f.breakpoints.length - 1 ? "≥ " + fmtNum(lo) : fmtNum(lo) + " – " + fmtNum(hi)}</td>`;
+        const [lo, hi] = b[k]; return `<td>${i === 0 ? "≤ " + fmtNum(hi) : i === f.breakpoints.length - 1 ? "≥ " + fmtNum(lo) : fmtNum(lo) + "\u2009–\u2009" + fmtNum(hi)}</td>`;
       }).join("")}<td><b>${esc(c.name)}</b></td></tr>`;
     }).join("")}</tbody></table>
-    <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(", ")} show dryness percentile (higher = drier)` : ""}</div></div>`;
+    <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(", ")} are shown as dryness percentiles (higher = drier)` : ""}</div></div>`;
 }
 function matrixTable(f) {
   if (META.fire_danger_method !== "matrix" || !f.breakpoints || !f.breakpoints[0].vpd || !f.breakpoints[0].sfdi) return "";
   const M = META.fd_matrix, B = f.breakpoints, last = B.length - 1;
   const rng = (k, i) => { const [lo, hi] = B[i][k]; return i === 0 ? "0 – " + fmtNum(hi) : i === last ? fmtNum(lo) + "+" : fmtNum(lo) + " – " + fmtNum(hi); };
   const ab = ["L", "M", "H", "VH", "E"];
+  const tv = (f.report.find(r => r.label === "Today") || {}).values || {};
+  const ti = CLASSES.indexOf(classForPct(tv.vpd_pct)), tj = CLASSES.indexOf(classForPct(tv.sfdi_pct));
   return `<div class="bp"><h3>Fire Danger Matrix (VPD × SFDI)</h3><table class="bpt mtx"><thead>
       <tr><th>VPD ↓ / SFDI →</th>${B.map((_, j) => `<th>${rng("sfdi", j)}</th>`).join("")}</tr></thead><tbody>
-      ${B.map((_, i) => `<tr><th>${rng("vpd", i)}</th>${M[i].map(c => `<td style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}"><b>${ab[c] || esc(CLASSES[c].name)}</b></td>`).join("")}</tr>`).join("")}
-    </tbody></table><div class="footnote">Same grid as the Kaibab FDOP workbook. Row and column ranges are this FDRA's own VPD and SFDI percentile classes (2005–2024).</div></div>`;
+      ${B.map((_, i) => `<tr><th>${rng("vpd", i)}</th>${M[i].map((c, j) => `<td class="${i === ti && j === tj ? "now" : ""}" style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}${i === ti && j === tj ? " (today)" : ""}"><b>${ab[c] || esc(CLASSES[c].name)}</b></td>`).join("")}</tr>`).join("")}
+    </tbody></table><div class="footnote">Row and column ranges are this FDRA's VPD and SFDI percentile classes (${esc(f.analysis_period || "")}).${ti >= 0 && tj >= 0 ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
+}
+function ratingSummary(f) {
+  if (META.fire_danger_method !== "matrix") return "";
+  const R = f.report;
+  const cell = (val, p) => { const c = classForPct(p); return `<td class="rs-c" style="background:${c ? c.color : "transparent"}"><span class="rs-n">${fmtNum(val)}</span>${c ? esc(c.name) : "—"}</td>`; };
+  return `<div class="bp rs"><h3>Rating Summary</h3><table class="bpt rst"><thead>
+      <tr><th></th>${R.map(r => `<th>${esc(r.label)}<span>${esc(r.type === "F" ? "Forecast" : "Observed")}</span></th>`).join("")}</tr></thead><tbody>
+      <tr><th>VPD</th>${R.map(r => cell((r.values || {}).vpd, (r.values || {}).vpd_pct)).join("")}</tr>
+      <tr><th>SFDI</th>${R.map(r => cell((r.values || {}).sfdi, (r.values || {}).sfdi_pct)).join("")}</tr>
+      <tr class="rs-total"><th>Fire Danger</th>${R.map(r => { const d = fdOf(r.values); return `<td class="rs-c" style="background:${d.cls ? d.cls.color : "transparent"}"><b>${d.cls ? esc(d.cls.name) : "—"}</b></td>`; }).join("")}</tr>
+    </tbody></table>
+    <div class="footnote">For each period, the VPD class and SFDI class are combined in the matrix to give the fire danger rating.</div></div>`;
 }
 function legendHtml() {
   return `<div class="legend"><span class="lab">Fire Danger / Percentile legend</span>${CLASSES.map(c =>
@@ -624,12 +659,12 @@ function outlookTable(list, {groupByZone = false, zoneRow = null} = {}) {
   if (groupByZone) {
     ZONES().forEach(z => {
       const w = zoneWorst(z);
-      body += `<tr class="zhead" data-zone="${esc(z)}" tabindex="0"><th colspan="${periods.length + 2}"><span class="sw" style="background:${w ? w.color : "transparent"}"></span>${esc(zoneLabel(z))} zone <small>${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"} · open zone ›</small></th></tr>`;
+      body += `<tr class="zhead" data-zone="${esc(z)}" tabindex="0"><th colspan="${periods.length + 2}"><span class="sw" style="background:${w ? w.color : "transparent"}"></span>${esc(zoneLabel(z))} zone <small>${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"} · View zone ›</small></th></tr>`;
       body += BY_ZONE[z].map(f => row(f, false)).join("");
     });
   } else body += list.map(f => row(f, false)).join("");
   return `<div class="tbl-scroll"><table class="outlook"><thead><tr><th>FDRA</th>${head}<th>Official rating</th></tr></thead><tbody>${body}</tbody></table></div>
-    <div class="footnote">Calculated fire danger: ${META.fire_danger_method === "matrix" ? "VPD class × SFDI class matrix (Kaibab FDOP method)" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Click a row to open it.</div>`;
+    <div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Select a row for details.</div>`;
 }
 
 function stationLinks(ids) {
@@ -640,7 +675,7 @@ function renderView() {
   const el = $("#reports");
   if (!state.zone) {               // leadership view
     el.innerHTML = `<section class="panel"><div class="phead"><h2>Southwest fire danger outlook</h2>
-        <div class="pmeta">All ${META.fdras.length} FDRAs in ${ZONES().length} zones · pick a zone tab above, or click any row</div></div>
+        <div class="pmeta">${META.fdras.length} FDRAs across ${ZONES().length} zones. Select a zone above or a row below for details.</div></div>
         ${legendHtml()}${outlookTable(META.fdras, {groupByZone: true})}</section>`;
     return;
   }
@@ -653,9 +688,9 @@ function renderView() {
     const note = without ? ` · ${without} without data yet` : "";
     el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(zoneLabel(z))} zone</h2>
         <div class="rating-box"><span style="color:var(--ink-3)">Zone today (highest FDRA)</span><span class="badge" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "No data"}</span></div>
-        <div class="pmeta">${withData.length ? `Average of ${withData.length} FDRA${withData.length === 1 ? "" : "s"} with data (${withData.map(f => esc(f.name)).join(", ")})${note} · ${ids.length} stations` : `${BY_ZONE[z].length} FDRAs · no station data yet`}</div></div>
-        ${zr ? legendHtml() + reportTable(zr) + `<div class="footnote">Zone values and percentiles are the average of the FDRAs that have data (each against its own history). The zone Fire Danger is the highest FDRA.</div>`
-             : `<div class="nodata"><b>No station data yet for this zone.</b><br>The zone summary appears automatically once its FDRAs are added to the GitHub data.</div>`}
+        <div class="pmeta">${withData.length ? `Summary of ${withData.length} FDRA${withData.length === 1 ? "" : "s"} (${withData.map(f => esc(f.name)).join(", ")})${note} · ${ids.length} stations` : `${BY_ZONE[z].length} FDRAs · no station data yet`}</div></div>
+        ${zr ? legendHtml() + reportTable(zr) + `<div class="footnote">Zone values are averages of FDRAs with available data; percentiles are calculated against each FDRA's own history. Zone fire danger reflects the highest-rated FDRA.</div>`
+             : `<div class="nodata"><b>No station data yet for this zone.</b><br>The zone summary will be available once station data is added for its FDRAs.</div>`}
         <h3 class="sub">FDRAs in this zone</h3>${outlookTable(BY_ZONE[z], {zoneRow: zr ? {...zr, zone: z} : null})}</section>`;
     return;
   }
@@ -664,18 +699,18 @@ function renderView() {
     el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(f.name)} FDRA</h2>
         <div class="rating-box">${ratingBox(f)}</div>
         <div class="pmeta">Zone ${esc(zoneLabel(f.zone))}</div></div>
-        <div class="nodata"><b>No station data yet for this FDRA.</b><br>The table and breakpoints appear here automatically once its stations and percentiles are added to the GitHub data (r3_fdra.csv and r3_fdra_percentile_historical.csv).</div></section>`;
+        <div class="nodata"><b>No station data yet for this FDRA.</b><br>Fire danger values and breakpoints will be available once station data and historical percentiles are added for this FDRA.</div></section>`;
     return;
   }
   el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(f.name)} FDRA</h2>
       <div class="rating-box">${ratingBox(f)}</div>
       <div class="pmeta">Zone ${esc(zoneLabel(f.zone))} · Reporting stations: ${stationLinks(f.sig_raws)}</div></div>
-      ${legendHtml()}${reportTable(f)}<div class="under">${breakpointTable(f)}${matrixTable(f)}</div></section>
+      ${legendHtml()}${reportTable(f)}<div class="under">${breakpointTable(f)}${matrixTable(f)}${ratingSummary(f)}</div></section>
     <section class="panel" id="chartPanel"><div class="phead"><h2>Season charts</h2>
       <div class="rating-box seg" role="group" aria-label="Chart range">
         <button data-range="year" aria-pressed="${chartRange === "year"}">This year</button>
         <button data-range="90" aria-pressed="${chartRange === "90"}">Last 90 days</button></div>
-      <div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · bands use percentiles from ${esc(f.analysis_period)}</div></div>
+      <div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · fire danger bands based on ${esc(f.analysis_period)} percentiles</div></div>
       <div class="charts" id="charts"><div class="muted">Loading charts…</div></div></section>`;
   loadCharts(f);
 }
@@ -715,7 +750,7 @@ async function loadCharts(f) {
   let d = CHART_CACHE[f.slug];
   if (!d) {
     try { d = CHART_CACHE[f.slug] = await (await fetch(`data/fdra/${encodeURIComponent(f.slug)}.json`, {cache: "no-cache"})).json(); }
-    catch (e) { const c = $("#charts"); if (c) c.innerHTML = `<div class="muted">Charts could not load.</div>`; return; }
+    catch (e) { const c = $("#charts"); if (c) c.innerHTML = `<div class="muted">Charts are temporarily unavailable.</div>`; return; }
   }
   if (state.fdra !== f.key) return;
   drawCharts(f, d);
@@ -726,7 +761,7 @@ function drawCharts(f, d) {
       <figcaption><b>${esc(ix.label)}</b> <span class="muted">· ${esc(f.name)}</span></figcaption>
       <div class="clegend">
         <span><i class="ln obs"></i>This season (FDRA average)</span><span><i class="ln fc"></i>Forecast</span>
-        ${d.climo ? `<span><i class="ln avg"></i>Average ${esc(f.analysis_period || "")}</span><span><i class="ln max"></i>Historical max</span>` : ""}
+        ${d.climo ? `<span><i class="ln avg"></i>Historical average</span><span><i class="ln max"></i>Historical maximum</span>` : ""}
       </div>
       <div class="cbox"></div></figure>`).join("");
   host.querySelectorAll("figure.chart").forEach(fig => svgChart(fig.querySelector(".cbox"), f, d, fig.dataset.ix));
@@ -807,7 +842,7 @@ async function openStation(id) {
   const fdraLinks = s.fdras.length ? s.fdras.map(k => `<button class="btn" style="padding:2px 8px;font-size:12.5px;margin:2px" data-fdra="${esc(k)}">${esc(k)}</button>`).join("") : "Not a reporting station for an FDRA";
   const wx = s.wx;
   $("#dBody").innerHTML = `<dl class="kv"><dt>Latitude</dt><dd>${s.lat}</dd><dt>Longitude</dt><dd>${s.lon}</dd><dt>FDRAs</dt><dd>${fdraLinks}</dd></dl>
-    ${wx ? `<h4>Latest weather · ${esc(wx.h.replace("T", " "))} LST</h4><dl class="kv">
+    ${wx ? `<h4>Latest weather · ${esc(fmtMst(wx.h))} LST</h4><dl class="kv">
       <dt>Temperature</dt><dd>${fmtNum(wx.t)} °F</dd><dt>Rel. humidity</dt><dd>${fmtNum(wx.rh)} %</dd>
       <dt>Wind</dt><dd>${fmtNum(wx.ws)} mph @ ${fmtNum(wx.wd)}° · gust ${fmtNum(wx.gs)}</dd><dt>Precip (hr)</dt><dd>${fmtNum(wx.p, 2)} in</dd><dt>VPD</dt><dd>${fmtNum(wx.vpd)}</dd></dl>` : ""}
     <h4>Daily NFDR · fuel model</h4><div class="fmsel" id="fmSel">${fms.map(m => `<button data-fm="${m}" aria-pressed="${m === "Y"}">${m}</button>`).join("")}</div>
@@ -816,14 +851,14 @@ async function openStation(id) {
   if (mapApi) mapApi.highlightStation(id);
   let detail;
   try { detail = await (await fetch(`data/stations/${encodeURIComponent(id)}.json`, {cache: "no-cache"})).json(); }
-  catch (e) { $("#fmTable").textContent = "Station details could not load."; return; }
+  catch (e) { $("#fmTable").textContent = "Station details are temporarily unavailable."; return; }
   const show = fm => {
     document.querySelectorAll("#fmSel button").forEach(b => b.setAttribute("aria-pressed", b.dataset.fm === fm));
     const obs = (detail.nfdr[fm] || []).slice(-5), fc = (detail.forecast[fm] || []).slice(0, 5);
     const row = (r, f) => `<tr${f ? ' style="color:var(--ink-2)"' : ""}><td>${esc(dayLabel(r.d))}${f ? " (F)" : ""}</td><td>${fmtNum(r.erc)}</td><td>${fmtNum(r.bi)}</td><td>${fmtNum(r.fm100, 1)}</td><td>${fmtNum(r.fm1000, 1)}</td><td>${fmtNum(r.kbdi)}</td></tr>`;
     $("#fmTable").innerHTML = `<table class="mini"><thead><tr><th>Day</th><th>ERC</th><th>BI</th><th>100h</th><th>1000h</th><th>KBDI</th></tr></thead>
       <tbody>${obs.map(r => row(r, false)).join("")}${fc.map(r => row(r, true)).join("")}</tbody></table>
-      <div class="footnote">Last 5 observed days, then forecast (F). Max ERC/BI, min fuel moistures.</div>`;
+      <div class="footnote">Last 5 observed days followed by forecast days (F). ERC and BI are daily maximums; fuel moistures are daily minimums.</div>`;
   };
   show(fms.includes("Y") ? "Y" : fms[0]);
   $("#fmSel").onclick = e => { const b = e.target.closest("button[data-fm]"); if (b) show(b.dataset.fm); };
@@ -890,7 +925,7 @@ $("#editForm").addEventListener("submit", async e => {
     $("#editDlg").close();
     renderAll(); mapApi?.refresh();
     toast("Rating saved for " + key);
-  } catch (err) { toast("Not saved: " + err.message); }
+  } catch (err) { toast("Unable to save: " + err.message); }
   finally { $("#editSave").disabled = false; }
 });
 
@@ -914,7 +949,7 @@ function setupAuth(esriId, OAuthInfo, Portal) {
     $("#userChip").textContent = (portal.user.fullName || portal.user.username) + (ok ? " · editor" : " · view only");
     $("#signInBtn").hidden = true; $("#signOutBtn").hidden = false;
     await loadRatings(); renderAll(); mapApi?.refresh();
-    if (!ok) toast("You are signed in, but not in the editors group.");
+    if (!ok) toast("You are signed in with view-only access.");
   };
   $("#signInBtn").hidden = false;
   $("#signInBtn").onclick = () => esriId.getCredential(sharing).then(onSignedIn).catch(() => {});
@@ -1073,7 +1108,7 @@ function startMap() {
 /* ---------------- start ---------------- */
 (async () => {
   try { await loadData(); }
-  catch (e) { $("#lastFetched").textContent = "Data could not load. Try again in a few minutes."; return; }
+  catch (e) { $("#lastFetched").textContent = "Data is temporarily unavailable. Please try again shortly."; return; }
   await loadRatings();
   const [hz, hf] = decodeURIComponent(location.hash.slice(1)).split("/");
   state.zone = BY_ZONE[hz] ? hz : null;            // default: no zone selected (overview)
