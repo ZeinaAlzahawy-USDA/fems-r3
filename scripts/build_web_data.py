@@ -78,11 +78,16 @@ FIRE_DANGER_INDEX = "erc"          # the index whose percentile sets the Fire Da
 BREAKPOINT_INDICES = ["erc", "bi"]  # shown in the Fire Danger Breakpoints table
 # Fuel moistures: a wetter fuel has a HIGHER historical percentile, which is LOWER danger.
 # The report shows these as dryness percentiles (100 - pct) so the colors mean danger, like the CA dashboard.
-INVERT_PCT = ["fm100", "fm1000"]
+#   GSI too: higher GSI = greener = lower danger. (Same as the Kaibab FDOP workbook's percentile tables.)
+INVERT_PCT = ["fm100", "fm1000", "gsi"]
+# SFDI / VPD / HDWI percentiles come from the one-time 2005-2024 history pull (r3_fdra_percentile_extra.csv).
+EXTRA_PCT_FILE = "r3_fdra_percentile_extra.csv"
+EXTRA_INDICES = {"sfdi": "SFDI", "vpd": "VPD", "hdwi": "HDWI"}
 
 # Daily report columns: (key, label, group, has_percentile)
 REPORT_COLS = [
-    ("erc", "ERC", "Fuels", True), ("bi", "BI", "Fuels", True), ("vpd", "VPD", "Fuels", False),
+    ("erc", "ERC", "Fuels", True), ("bi", "BI", "Fuels", True),
+    ("sfdi", "SFDI", "Fuels", True), ("vpd", "VPD", "Fuels", True), ("hdwi", "HDWI", "Fuels", True),
     ("fm100", "100HR", "Fuels", True), ("fm1000", "1000HR", "Fuels", True),
     ("kbdi", "KBDI", "Fuels", True), ("gsi", "GSI", "Fuels", True),
     ("tmax", "Max T", "Weather", False), ("tmin", "Min T", "Weather", False),
@@ -123,6 +128,25 @@ def write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(obj, f, separators=(",", ":"), allow_nan=False)
+
+
+def vpd_pa(tmax_f, rhmin):
+    """Daily VPD (Pa) from Max Temp (F) and Min RH (%), same Magnus formula as the Kaibab FDOP workbook."""
+    if tmax_f is None or rhmin is None or pd.isna(tmax_f) or pd.isna(rhmin):
+        return None
+    tc = (float(tmax_f) - 32) * 5 / 9
+    es = 6.112 * np.exp((17.67 * tc) / (tc + 243.5))
+    return (es - (float(rhmin) / 100) * es) * 100
+
+
+def sfdi_of(erc, bi):
+    """Severe Fire Danger Index = ERC x BI."""
+    return None if erc is None or bi is None or pd.isna(erc) or pd.isna(bi) else float(erc) * float(bi)
+
+
+def hdwi_of(vpd, wind_mph):
+    """Hot-Dry-Windy Index as in the workbook: VPD/100 x wind (m/s)."""
+    return None if vpd is None or wind_mph is None or pd.isna(vpd) or pd.isna(wind_mph) else (float(vpd) / 100) * (float(wind_mph) * 0.447)
 
 
 def percentile_for(value, thresholds):
@@ -195,6 +219,8 @@ def main():
     fdra = pd.read_csv(P("r3_fdra.csv"), dtype=str).dropna(subset=["FDRA_ZONE"])
     fdra = fdra[fdra["FDRA_ZONE"].str.strip() != ""]
     hist = pd.read_csv(P("r3_fdra_percentile_historical.csv"))
+    extra_path = P(EXTRA_PCT_FILE)
+    extra = pd.read_csv(extra_path) if os.path.exists(extra_path) else None
     climo_path = P("r3_fdra_daily_climo.csv")   # optional: from the one-time 2005-2024 history pull
     climo = pd.read_csv(climo_path) if os.path.exists(climo_path) else None
     fdra_obs_path = P("obs_nfdr_daily_fdra.csv")
@@ -217,6 +243,11 @@ def main():
             thresholds[k] = pairs
             row = {int(p): v for v, p in pairs}
             refs[k] = {str(p): rnd(row.get(p), 2) for p in REF_PCTS}
+        for k, col in EXTRA_INDICES.items():
+            thresholds[k] = []
+            if extra is not None:
+                e = extra[extra["FDRA_ZONE"].str.strip() == key]
+                thresholds[k] = sorted(zip(e[col].astype(float), e["Percentiles"].astype(int)))
 
         # FDRA daily averages from station data (season + forecast)
         def daily_avg(df, kind):
@@ -253,25 +284,39 @@ def main():
 
         # ---------- daily report table (Yesterday / Today / Tomorrow / 5-day averages) ----------
         def day_values(nf, wx, days):
-            """FDRA average across its stations over the given days (mean of daily station means)."""
+            """FDRA values for the given days, following the Kaibab FDOP workbook:
+            each day = average of the FDRA's stations; VPD from that day's averaged Max T and Min RH;
+            several days = average of the daily values, SFDI = avg ERC x avg BI, HDWI from avg VPD and avg wind,
+            precip = total over the days."""
             s_n = nf[(nf["sid"].isin(sig)) & (nf["fuel_model"] == fm) & (nf["summary_date"].isin(days))]
             s_w = wx[(wx["sid"].isin(sig)) & (wx["summary_date"].isin(days))]
             if s_n.empty and s_w.empty:
                 return None
             src = {"erc": "Max ERC", "bi": "Max BI", "fm100": "Min 100 hr FM",
                    "fm1000": "Min 1000 hr FM", "kbdi": "KBDI", "gsi": "GSI"}
-            wsrc = {"vpd": "Max VPD", "tmax": "Max Temp F", "tmin": "Min Temp F", "wind": "Max Wind mph",
+            wsrc = {"tmax": "Max Temp F", "tmin": "Min Temp F", "wind": "Max Wind mph",
                     "gust": "Max Wind Gust mph", "rhmin": "Min RH pct", "precip": "Precip Total in"}
-            out = {}
+            daily = pd.DataFrame(index=sorted(days))
             for k, c in src.items():
-                v = pd.to_numeric(s_n[c], errors="coerce").groupby(s_n["summary_date"]).mean().mean()
-                out[k] = rnd(v, 2 if k == "gsi" else 0)
-                pct = percentile_for(v, thresholds[k]) if pd.notna(v) else None
-                out[k + "_pct"] = (100 - pct) if (pct is not None and k in INVERT_PCT) else pct
+                daily[k] = pd.to_numeric(s_n[c], errors="coerce").groupby(s_n["summary_date"]).mean()
             for k, c in wsrc.items():
-                v = pd.to_numeric(s_w[c], errors="coerce").groupby(s_w["summary_date"]).mean().mean() if len(s_w) else None
-                out[k] = rnd(v, 2 if k == "precip" else 0)
-            return out
+                daily[k] = pd.to_numeric(s_w[c], errors="coerce").groupby(s_w["summary_date"]).mean() if len(s_w) else np.nan
+            daily["vpd"] = [vpd_pa(t, h) for t, h in zip(daily["tmax"], daily["rhmin"])]
+            daily["vpd"] = pd.to_numeric(daily["vpd"], errors="coerce")
+            avg = daily.mean(numeric_only=True)
+            out = {}
+            for k in [*src, "vpd", *[w for w in wsrc if w != "precip"]]:
+                out[k] = avg.get(k)
+            out["precip"] = daily["precip"].sum(min_count=1) if "precip" in daily else None
+            out["sfdi"] = sfdi_of(out["erc"], out["bi"])
+            out["hdwi"] = hdwi_of(out["vpd"], out["wind"])
+            res = {}
+            for k, v in out.items():
+                res[k] = rnd(v, 2 if k in ("gsi", "precip") else 0)
+                if k in thresholds:
+                    pct = percentile_for(v, thresholds[k]) if (v is not None and pd.notna(v)) else None
+                    res[k + "_pct"] = (100 - pct) if (pct is not None and k in INVERT_PCT) else pct
+            return res
 
         obs_days = sorted(nfdr["summary_date"].unique())
         future = [d for d in fc_days if today and d > today]
@@ -280,8 +325,8 @@ def main():
             ("Yesterday", nfdr, wxd, obs_days[-1:]),
             ("Today", fc, fwx, [today] if today else []),
             ("Tomorrow", fc, fwx, future[:1]),
-            ("Average Past 5 Days", nfdr, wxd, obs_days[-5:]),
-            ("Average Next 5 Days", fc, fwx, future[:5]),
+            ("5-Day Average", nfdr, wxd, obs_days[-5:]),            # last 5 observed days
+            ("5-Day Outlook", fc, fwx, ([today] if today else []) + future[:4]),   # today + next 4 days
         ]:
             report.append({"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                            "values": day_values(nf, wx, days) if days else None})
@@ -289,7 +334,7 @@ def main():
         breakpoints = []
         for c in CLASSES:
             row = {"class": c["name"], "range": f'{c["min"]}-{c["max"]}%'}
-            for k in BREAKPOINT_INDICES:
+            for k in [*BREAKPOINT_INDICES, *[x for x in EXTRA_INDICES if thresholds[x]]]:
                 lo = next((v for v, p in thresholds[k] if p >= max(c["min"], 1)), None)
                 hi = next((v for v, p in reversed(thresholds[k]) if p <= c["max"]), None)
                 row[k] = [rnd(lo, 0), rnd(hi, 0)]
@@ -359,7 +404,7 @@ def main():
         "today": today,
         "classes": CLASSES, "fire_danger_index": FIRE_DANGER_INDEX,
         "report_cols": [{"key": k, "label": l, "group": g, "pct": p} for k, l, g, p in REPORT_COLS],
-        "breakpoint_indices": BREAKPOINT_INDICES, "inverted_pct": INVERT_PCT,
+        "breakpoint_indices": BREAKPOINT_INDICES + ([*EXTRA_INDICES] if extra is not None else []), "inverted_pct": INVERT_PCT,
         "stations": stations,
         "fdras": fdra_list,
     })

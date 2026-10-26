@@ -7,8 +7,11 @@ For each FDRA in data/r3_fdra.csv:
   2. FDRA daily value = average of its stations that reported that day.
   3. For each calendar day (Jan 1 … Dec 31): average and maximum of that day across all years.
 
-Output: data/r3_fdra_daily_climo.csv
-  FDRA_ZONE, doy, month_day, erc_avg, erc_max, bi_avg, bi_max, years
+Outputs:
+  data/r3_fdra_daily_climo.csv      FDRA_ZONE, doy, month_day, erc_avg, erc_max, bi_avg, bi_max, years
+  data/r3_fdra_percentile_extra.csv FDRA_ZONE, Percentiles (0-100), SFDI, VPD, HDWI
+      (2005-2024 percentiles for the indices the FDRA percentile file does not have; same formulas as the
+       Kaibab FDOP workbook: SFDI = ERC x BI, VPD from Max T and Min RH, HDWI = VPD/100 x max wind (m/s))
 Raw station data is also saved: data/history_2005_2024_daily_erc_bi.csv
 
 Uses the same FEMS endpoint and secrets as the existing pipeline. Does not change any other file.
@@ -27,6 +30,7 @@ DATA_DIR = os.environ.get("FEMS_DATA_DIR", "data")
 START_YEAR = int(os.environ.get("CLIMO_START_YEAR", "2005"))
 END_YEAR = int(os.environ.get("CLIMO_END_YEAR", "2024"))
 OUT = os.path.join(DATA_DIR, "r3_fdra_daily_climo.csv")
+EXTRA_OUT = os.path.join(DATA_DIR, "r3_fdra_percentile_extra.csv")
 RAW_OUT = os.path.join(DATA_DIR, f"history_{START_YEAR}_{END_YEAR}_daily_erc_bi.csv")
 
 AUTH = HTTPBasicAuth(os.environ["FEMS_USERNAME"], os.environ["FEMS_API_KEY"])
@@ -40,6 +44,23 @@ query NfdrMinMax($startDate: Date!, $endDate: Date, $stationIds: String, $fuelMo
   }
 }
 """
+
+
+Q_WX_MINMAX = """
+query WxMinMax($startDate: Date!, $endDate: Date, $stationIds: String) {
+  wxMinMax(startDate: $startDate, endDate: $endDate, stationIds: $stationIds, hasHistoricData: ALL) {
+    data { station_id summary_date observation_type temperature_max relative_humidity_min wind_speed_max }
+  }
+}
+"""
+
+
+def vpd_pa(tmax_f, rhmin):
+    """Same Magnus formula as the Kaibab FDOP workbook (and build_web_data.py)."""
+    import numpy as np
+    tc = (tmax_f - 32) * 5 / 9
+    es = 6.112 * np.exp((17.67 * tc) / (tc + 243.5))
+    return (es - (rhmin / 100) * es) * 100
 
 
 def norm_id(v):
@@ -56,17 +77,17 @@ def rnd(x, places=1):
     return float(Decimal(str(x)).quantize(q, rounding=ROUND_HALF_UP))
 
 
-def gql(variables, tries=4):
+def gql(variables, tries=4, query=Q_NFDR_MINMAX, field="nfdrMinMax"):
     for attempt in range(1, tries + 1):
         try:
             r = requests.post(ENDPOINT, headers=HEADERS, auth=AUTH,
-                              json={"query": Q_NFDR_MINMAX, "variables": variables}, timeout=600)
+                              json={"query": query, "variables": variables}, timeout=600)
             ct = r.headers.get("content-type", "")
             j = r.json() if "application/json" in ct else {"errors": [{"message": r.text[:300]}]}
             if j.get("errors"):
                 raise RuntimeError(j["errors"])
             r.raise_for_status()
-            return j["data"]["nfdrMinMax"]["data"] or []
+            return j["data"][field]["data"] or []
         except Exception as e:
             print(f"  attempt {attempt} failed: {e}")
             if attempt == tries:
@@ -102,13 +123,45 @@ def main():
     raw[["sid", "summary_date", "fuel_model", "erc", "bi"]].to_csv(RAW_OUT, index=False)
     print(f"Saved raw history: {RAW_OUT} ({len(raw)} rows)")
 
-    out = []
+    # ---- weather history (for VPD / HDWI) ----
+    all_stations = sorted({s for lst in fdra["sig"] for s in lst})
+    wrows = []
+    for year in range(START_YEAR, END_YEAR + 1):
+        data = gql({"startDate": f"{year}-01-01", "endDate": f"{year}-12-31", "stationIds": ",".join(all_stations)},
+                   query=Q_WX_MINMAX, field="wxMinMax")
+        print(f"  weather {year}: {len(data)} rows")
+        wrows.extend(data)
+        time.sleep(2)
+    wx = pd.DataFrame(wrows)
+    if not wx.empty:
+        wx = wx[wx["observation_type"] == "O"].copy()
+        wx["sid"] = wx["station_id"].map(norm_id)
+        for c in ["temperature_max", "relative_humidity_min", "wind_speed_max"]:
+            wx[c] = pd.to_numeric(wx[c], errors="coerce")
+        wx = wx.drop_duplicates(["sid", "summary_date"], keep="last")
+
+    out, extra = [], []
     for _, r in fdra.iterrows():
         sub = raw[(raw["sid"].isin(r["sig"])) & (raw["fuel_model"] == r["fm"])]
         if sub.empty:
             print(f"  {r['FDRA_ZONE']}: no history")
             continue
         daily = sub.groupby("summary_date")[["erc", "bi"]].mean().reset_index()
+
+        # SFDI / VPD / HDWI percentiles over every day 2005-2024 (Jan 1 - Dec 31)
+        if not wx.empty:
+            w = wx[wx["sid"].isin(r["sig"])].groupby("summary_date")[["temperature_max", "relative_humidity_min", "wind_speed_max"]].mean()
+            dd = daily.set_index("summary_date").join(w, how="inner")
+            dd["SFDI"] = dd["erc"] * dd["bi"]
+            dd["VPD"] = vpd_pa(dd["temperature_max"], dd["relative_humidity_min"])
+            dd["HDWI"] = (dd["VPD"] / 100) * (dd["wind_speed_max"] * 0.447)
+            pct = list(range(0, 101))
+            ex = pd.DataFrame({"FDRA_ZONE": r["FDRA_ZONE"].strip(), "Percentiles": pct})
+            for c in ["SFDI", "VPD", "HDWI"]:
+                vals = dd[c].dropna()
+                ex[c] = [rnd(v, 2) for v in vals.quantile([p / 100 for p in pct]).values] if len(vals) else None
+            extra.append(ex)
+
         d = pd.to_datetime(daily["summary_date"])
         daily = daily[~((d.dt.month == 2) & (d.dt.day == 29))]      # drop Feb 29 so every year has 365 days
         d = pd.to_datetime(daily["summary_date"])
@@ -127,6 +180,9 @@ def main():
         res[c] = res[c].map(lambda v: rnd(v, 1))
     res[["FDRA_ZONE", "doy", "month_day", "erc_avg", "erc_max", "bi_avg", "bi_max", "years"]].to_csv(OUT, index=False)
     print(f"Wrote {OUT}: {res['FDRA_ZONE'].nunique()} FDRAs, {len(res)} rows ({START_YEAR}-{END_YEAR})")
+    if extra:
+        pd.concat(extra, ignore_index=True).to_csv(EXTRA_OUT, index=False)
+        print(f"Wrote {EXTRA_OUT}: SFDI / VPD / HDWI percentiles for {len(extra)} FDRAs")
 
 
 if __name__ == "__main__":
