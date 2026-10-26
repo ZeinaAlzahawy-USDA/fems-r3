@@ -409,16 +409,23 @@ def main():
             g = g.sort_values("summary_date")
             fc_fm[fm] = [{"d": d, **{k: rnd(v, 1) for k, v in zip(NFDR_COLS.values(), vals)}}
                          for d, *vals in g[["summary_date", *NFDR_COLS.keys()]].itertuples(index=False)]
-        wd = wxd[wxd["sid"] == sid].sort_values("summary_date")
-        wx_daily = [{"d": d, **{k: rnd(v, 2 if k == "precip" else 0) for k, v in zip(WX_DAILY_COLS.values(), vals)}}
-                    for d, *vals in wd[["summary_date", *WX_DAILY_COLS.keys()]].itertuples(index=False)]
+        def wx_rows(df):
+            df = df.sort_values("summary_date")
+            rows = []
+            for d, *vals in df[["summary_date", *WX_DAILY_COLS.keys()]].itertuples(index=False):
+                row = {"d": d, **{k: rnd(v, 2 if k == "precip" else 0) for k, v in zip(WX_DAILY_COLS.values(), vals)}}
+                row["vpdmax"] = rnd(vpd_pa(row.get("tmax"), row.get("rhmin")), 0)   # same VPD formula as the FDRA tables
+                rows.append(row)
+            return rows
+        wx_daily = wx_rows(wxd[wxd["sid"] == sid])
+        wx_fc = wx_rows(fwx[fwx["sid"] == sid]) if len(fwx) else []
         wx_hourly = []
         if wxh is not None:
             wh = wxh[wxh["sid"] == sid]
             wx_hourly = [{"h": h, **{k: rnd(v, 2 if k == "p" else 0) for k, v in zip(WX_HOURLY_COLS.values(), vals)}}
                          for h, *vals in wh[["hour", *WX_HOURLY_COLS.keys()]].itertuples(index=False)]
         write_json(os.path.join(OUT_DIR, "stations", sid + ".json"),
-                   {"id": sid, "nfdr": by_fm, "forecast": fc_fm, "wx_daily": wx_daily, "wx_hourly": wx_hourly})
+                   {"id": sid, "nfdr": by_fm, "forecast": fc_fm, "wx_daily": wx_daily, "wx_forecast": wx_fc, "wx_hourly": wx_hourly})
 
         last_wx = wx_hourly[-1] if wx_hourly else None
         stations.append({
