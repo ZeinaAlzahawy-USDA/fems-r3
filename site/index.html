@@ -184,6 +184,14 @@ table.bpt.mtx td{min-width:64px;border:2px solid var(--surface)}
 .drawer.show{display:block}
 .drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface)}
 .drawer h3{margin:0;font-size:16px}
+.drawer .dact{margin-left:auto;display:flex;gap:2px;align-items:center}
+.drawer .dact .x{margin-left:0;width:32px;height:32px;border-radius:6px;display:grid;place-items:center}
+.drawer .dact .x:hover{background:var(--surface-2)}
+.drawer #dMin{font-size:18px}
+.drawer.min{max-height:none;overflow:hidden}
+.drawer.min .body{display:none}
+.drawer.min header{border-bottom:none;cursor:pointer}
+.drawer.min header:hover{background:var(--surface-2)}
 .drawer .x{margin-left:auto;border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--ink-2)}
 .drawer .body{padding:12px 14px;font-size:13.5px}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px}
@@ -213,6 +221,15 @@ button.lnk{border:none;background:none;padding:0;color:var(--focus);cursor:point
 button.lnk.back{display:inline-block;margin-bottom:10px;font-size:13px}
 .ph-row{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:4px}
 .badge.sm{font-size:12px;padding:1px 8px;border-radius:4px}
+.pbars{display:grid;gap:5px}
+.pb{display:grid;grid-template-columns:64px 52px 1fr 40px;align-items:center;gap:8px;font-size:12.5px;font-variant-numeric:tabular-nums}
+.pb-l{color:var(--ink-2);font-weight:600}.pb-v{text-align:right}.pb-p{text-align:right;color:var(--ink-2)}
+.pb-t{height:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:3px;overflow:hidden;position:relative}
+.pb-t i{display:block;height:100%;border-right:1px solid rgba(0,0,0,.25)}
+.olrow{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.ol{display:flex;flex-direction:column;align-items:flex-start;gap:4px;border:1px solid var(--line);border-radius:6px;padding:6px 7px;background:var(--surface-2)}
+.ol-l{font-size:11.5px;font-weight:600;color:var(--ink-2)}.ol-p{font-size:11.5px;color:var(--ink-3)}
+.dtabs.big button{font-size:14px}
 .stn .badge.sm{margin-right:2px}
 .fdra-bar .details{margin-left:8px;padding:4px 10px;font-size:13px}
 .fmsel button{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:2px 9px;cursor:pointer;font-size:12.5px}
@@ -373,7 +390,7 @@ footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40p
 
 <div class="zmenu" id="zoneMenu" role="menu"></div>
 <aside class="drawer" id="drawer" aria-live="polite">
-  <header><div><h3 id="dTitle"></h3><div class="sub" id="dSub" style="font-size:12.5px;color:var(--ink-3)"></div></div><button class="x" id="dClose" aria-label="Close">×</button></header>
+  <header><div><h3 id="dTitle"></h3><div class="sub" id="dSub" style="font-size:12.5px;color:var(--ink-3)"></div></div><div class="dact"><button class="x" id="dMin" aria-label="Minimize" title="Minimize">–</button><button class="x" id="dClose" aria-label="Close" title="Close">×</button></div></header>
   <div class="body" id="dBody"></div>
 </aside>
 
@@ -764,7 +781,7 @@ function go(zone, fdra, {zoom = true} = {}) {
   renderAll(); setHash();
   if (mapApi) { mapApi.refresh(); if (zoom) mapApi.zoomToView(); }
   if (!state.zone) { panelCtx = null; $("#drawer").classList.remove("show"); mapApi?.highlightStation(null); }
-  else if (window.innerWidth >= 900) openPanelForState();
+  else if (window.innerWidth >= 900 || $("#drawer").classList.contains("show")) openPanelForState();   // keep an open (or minimized) popup in step with the selection
   else panelCtx = state.fdra ? {type: "fdra", key: state.fdra} : {type: "zone", key: state.zone};
 }
 const selectOverview = () => go(null, null);
@@ -892,6 +909,42 @@ function stationChips(ids, cur) {
   return `<div class="fst-l">${ids.map(sid => { const st = STATIONS[sid];
     return `<button class="stn${sid === cur ? " cur" : ""}" ${sid === cur ? 'aria-current="true"' : `data-station="${esc(sid)}"`}><b>${esc(sid)}</b>${st ? esc(titleCase(st.name)) : ""}</button>`; }).join("")}</div>`;
 }
+const PANEL_LAYOUT = "tabs";   // FDRA popup: "tabs" = FDRA Summary | Stations, "scroll" = everything in one column
+let fdraView = "summary";
+const PCT_INDICES = ["erc", "bi", "sfdi", "vpd", "hdwi", "fm100", "fm1000", "kbdi", "gsi"];
+function fdraSummary(f) {
+  if (f.noData) return "";
+  const v = periodVals(f);
+  const label = k => (META.report_cols.find(c => c.key === k) || {}).label || k.toUpperCase();
+  const bars = PCT_INDICES.filter(k => v[k] != null).map(k => {
+    const p = v[k + "_pct"], c = classForPct(p);
+    return `<div class="pb"><span class="pb-l">${esc(label(k))}</span><span class="pb-v">${fmtNum(v[k], DEC[k] || 0)}</span>
+      <span class="pb-t"><i style="width:${p == null ? 0 : Math.max(2, p)}%;background:${c ? c.color : "transparent"}"></i></span>
+      <span class="pb-p">${p == null ? "—" : p + "%"}</span></div>`;
+  }).join("");
+  const outlook = f.report.map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
+    return `<div class="ol"><span class="ol-l">${esc(r.label.replace("5-Day ", "5-Day "))}</span><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span><span class="ol-p">ERC ${p == null ? "—" : p + "%"}</span></div>`; }).join("");
+  const hist = `<div id="histCmp" class="muted" style="font-size:12.5px">Loading…</div>`;
+  return `<h4>FDRA Percentiles · ${esc(dayLabel(panelDay === "obs" ? META.latest_obs_date : META.today))}</h4><div class="pbars">${bars}</div>
+    <div class="footnote">Percentiles against this FDRA's ${esc(f.analysis_period || "")} history. 100HR, 1000HR and GSI are shown as dryness percentiles.</div>
+    <h4>Outlook</h4><div class="olrow">${outlook}</div>
+    <h4>Compared with History</h4>${hist}`;
+}
+async function fillHistory(f) {
+  const el = $("#histCmp"); if (!el) return;
+  let d = CHART_CACHE[f.slug];
+  if (!d) { try { d = CHART_CACHE[f.slug] = await (await fetch(`data/fdra/${encodeURIComponent(f.slug)}.json`, {cache: "no-cache"})).json(); } catch (e) {} }
+  const iso = panelDay === "obs" ? META.latest_obs_date : META.today;
+  const dt = new Date(iso + "T12:00:00"), doy = Math.round((dt - new Date(dt.getFullYear(), 0, 0)) / 864e5) - ((dt.getFullYear() % 4 === 0 && dt.getMonth() > 1) ? 1 : 0);
+  const c = d && d.climo ? d.climo.find(x => x.doy === doy) : null;
+  const v = periodVals(f);
+  if (!$("#histCmp")) return;
+  if (!c) { $("#histCmp").textContent = "Historical comparison is not available for this FDRA."; return; }
+  const row = (lbl, val, avg, max) => `<tr><td>${lbl}</td><td><b>${fmtNum(val)}</b></td><td>${fmtNum(avg)}</td><td>${fmtNum(max)}</td><td>${val == null || avg == null ? "—" : (val >= avg ? "+" : "") + fmtNum(val - avg) }</td></tr>`;
+  $("#histCmp").outerHTML = `<table class="mini"><thead><tr><th></th><th>${panelDay === "obs" ? "Yesterday" : "Today"}</th><th>Avg for ${esc(dt.toLocaleDateString("en-US", {month: "short", day: "numeric"}))}</th><th>Record max</th><th>vs avg</th></tr></thead>
+    <tbody>${row("ERC", v.erc, c.erc_avg, c.erc_max)}${row("BI", v.bi, c.bi_avg, c.bi_max)}</tbody></table>
+    <div class="footnote">Average and record maximum for this calendar date, ${esc(f.analysis_period || "")}.</div>`;
+}
 function openFdraPanel(key) {
   const f = FDRA[key]; if (!f) return;
   panelCtx = {type: "fdra", key};
@@ -916,9 +969,16 @@ function openFdraPanel(key) {
     }
     return daySwitch() + t;
   };
-  $("#dBody").innerHTML = `<div class="ph-row"><span class="muted">${(ratings[f.key] && classByName(ratings[f.key].rating)) ? "Official rating" : "Calculated rating today"}</span>${ratingBadge(f)}</div>
-    <h4>FDRA Stations</h4>${f.sig_raws.length ? stationChips(f.sig_raws) : '<div class="muted">No stations assigned yet.</div>'}
-    ${panelTabs()}<div id="dPane">${body()}</div>`;
+  const head = `<div class="ph-row"><span class="muted">${(ratings[f.key] && classByName(ratings[f.key].rating)) ? "Official rating" : "Calculated rating today"}</span>${ratingBadge(f)}</div>`;
+  const stationsBlock = `<h4>FDRA Stations</h4>${f.sig_raws.length ? stationChips(f.sig_raws) : '<div class="muted">No stations assigned yet.</div>'}
+    <h4>Station Summary</h4>${panelTabs()}<div id="dPane">${body()}</div>`;
+  if (PANEL_LAYOUT === "tabs" && !f.noData) {
+    $("#dBody").innerHTML = head + `<div class="dtabs big" role="tablist"><button role="tab" data-fview="summary" aria-selected="${fdraView === "summary"}">FDRA Summary</button><button role="tab" data-fview="stations" aria-selected="${fdraView === "stations"}">Stations</button></div>`
+      + daySwitch() + (fdraView === "summary" ? fdraSummary(f) : stationsBlock.replace(daySwitch(), ""));
+  } else {
+    $("#dBody").innerHTML = head + (f.noData ? "" : daySwitch() + fdraSummary(f)) + stationsBlock.replace(daySwitch(), "");
+  }
+  fillHistory(f);
   wirePanel(() => openFdraPanel(key));
   showDrawer();
 }
@@ -956,14 +1016,26 @@ function openZonePanel(z) {
 }
 function wirePanel(rerender) {
   $("#dBody").onclick = e => {
-    const t = e.target.closest("[data-ptab],[data-pday],[data-pfdra]"); if (!t) return;
+    const t = e.target.closest("[data-ptab],[data-pday],[data-pfdra],[data-fview]"); if (!t) return;
     e.stopPropagation();
-    if (t.dataset.ptab) { panelTab = t.dataset.ptab; rerender(); }
+    if (t.dataset.fview) { fdraView = t.dataset.fview; rerender(); }
+    else if (t.dataset.ptab) { panelTab = t.dataset.ptab; rerender(); }
     else if (t.dataset.pday) { panelDay = t.dataset.pday; rerender(); }
     else if (t.dataset.pfdra) selectFdra(t.dataset.pfdra);
   };
 }
-function showDrawer() { $("#drawer").classList.add("show"); $("#drawer").scrollTop = 0; }
+let drawerMin = false;
+try { drawerMin = localStorage.getItem("drawerMin") === "1"; } catch (e) {}
+function setDrawerMin(v) {
+  drawerMin = v;
+  const d = $("#drawer"), b = $("#dMin");
+  d.classList.toggle("min", v);
+  b.textContent = v ? "▢" : "–";
+  b.setAttribute("aria-label", v ? "Restore" : "Minimize"); b.title = v ? "Restore" : "Minimize";
+  d.querySelector("header").setAttribute("aria-expanded", String(!v));
+  try { localStorage.setItem("drawerMin", v ? "1" : "0"); } catch (e) {}
+}
+function showDrawer() { $("#drawer").classList.add("show"); setDrawerMin(drawerMin); if (!drawerMin) $("#drawer").scrollTop = 0; }
 function openPanelForState() {
   if (state.fdra) openFdraPanel(state.fdra);
   else if (state.zone) openZonePanel(state.zone);
@@ -1066,8 +1138,10 @@ document.addEventListener("keydown", e => {
 window.addEventListener("resize", closeZoneMenu);
 window.addEventListener("scroll", positionMenu, {passive: true});
 $("#zoneTabs").addEventListener("scroll", positionMenu, {passive: true});
+$("#dMin").onclick = e => { e.stopPropagation(); setDrawerMin(!drawerMin); };
+$("#drawer header").addEventListener("click", e => { if (drawerMin && !e.target.closest("#dClose")) setDrawerMin(false); });
 $("#dClose").onclick = () => { $("#drawer").classList.remove("show"); mapApi?.highlightStation(null); };
-document.addEventListener("click", e => { if (e.target.closest("[data-details]")) { e.preventDefault(); openPanelForState(); } });
+document.addEventListener("click", e => { if (e.target.closest("[data-details]")) { e.preventDefault(); drawerMin = false; openPanelForState(); } });
 $("#btnZone").onclick = () => mapApi?.zoomToView();
 $("#btnRegion").onclick = () => mapApi?.zoomRegion();
 $("#btnUS").onclick = () => mapApi?.zoomUS();
@@ -1289,6 +1363,7 @@ function startMap() {
   state.zone = BY_ZONE[hz] ? hz : null;            // default: no zone selected (overview)
   state.fdra = (state.zone && hf && BY_ZONE[state.zone].find(f => f.slug === hf)?.key) || null;
   renderAll(); renderLegend();
+  if (state.zone && window.innerWidth >= 900) openPanelForState();   // a shared link to a zone or FDRA opens its popup too
   startMap();
 })();
 })();
