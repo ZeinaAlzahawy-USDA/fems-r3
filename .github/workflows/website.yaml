@@ -46,6 +46,7 @@ jobs:
           gh release download forecast-data -D data --clobber \
             -p history_forecast_daily_nfdr.csv -p history_forecast_daily_weather.csv
           gh release download fdra-climo -D data --clobber -p r3_fdra_daily_climo.csv || echo "No FDRA history yet (charts show without Average/Max lines)"
+          gh release download fdra-climo -D data --clobber -p r3_fdra_percentile_extra.csv || echo "No SFDI/VPD/HDWI percentiles yet (re-run the one-time history workflow)"
 
       - name: Build website data
         run: python scripts/build_web_data.py

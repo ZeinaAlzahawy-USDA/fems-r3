@@ -49,7 +49,7 @@ jobs:
       - name: Save to a release (fdra-climo)
         run: |
           gh release view fdra-climo >/dev/null 2>&1 || gh release create fdra-climo --title "FDRA history ${CLIMO_START_YEAR}-${CLIMO_END_YEAR}" --notes "Daily average and max ERC/BI per FDRA for the website charts."
-          gh release upload fdra-climo data/r3_fdra_daily_climo.csv data/history_${CLIMO_START_YEAR}_${CLIMO_END_YEAR}_daily_erc_bi.csv --clobber
+          gh release upload fdra-climo data/r3_fdra_daily_climo.csv data/r3_fdra_percentile_extra.csv data/history_${CLIMO_START_YEAR}_${CLIMO_END_YEAR}_daily_erc_bi.csv --clobber
 
       - name: Rebuild the website
         run: gh workflow run website.yaml
