@@ -74,7 +74,20 @@ CLASSES = [
     {"name": "Very High", "min": 85, "max": 97, "color": "#f4b183"},
     {"name": "Extreme", "min": 98, "max": 100, "color": "#ff8f8f"},
 ]
-FIRE_DANGER_INDEX = "erc"          # the index whose percentile sets the Fire Danger column
+FIRE_DANGER_INDEX = "erc"          # used for the ERC method, and as the fallback when VPD/SFDI are missing
+# Fire Danger method:
+#   "matrix" = VPD class x SFDI class, the same grid as the Kaibab FDOP workbook (Prevention tab).
+#              Each FDRA's VPD and SFDI classes come from its own 2005-2024 percentiles and the CLASSES legend.
+#   "erc"    = ERC percentile class only.
+FIRE_DANGER_METHOD = "matrix"
+# Rows = VPD class (Low..Extreme), columns = SFDI class (Low..Extreme); 0=Low 1=Moderate 2=High 3=Very High 4=Extreme
+FD_MATRIX = [
+    [0, 0, 0, 1, 1],
+    [0, 1, 1, 1, 2],
+    [1, 1, 2, 2, 3],
+    [1, 2, 3, 3, 4],
+    [2, 3, 3, 4, 4],
+]
 BREAKPOINT_INDICES = ["erc", "bi"]  # shown in the Fire Danger Breakpoints table
 # Fuel moistures: a wetter fuel has a HIGHER historical percentile, which is LOWER danger.
 # The report shows these as dryness percentiles (100 - pct) so the colors mean danger, like the CA dashboard.
@@ -147,6 +160,26 @@ def sfdi_of(erc, bi):
 def hdwi_of(vpd, wind_mph):
     """Hot-Dry-Windy Index as in the workbook: VPD/100 x wind (m/s)."""
     return None if vpd is None or wind_mph is None or pd.isna(vpd) or pd.isna(wind_mph) else (float(vpd) / 100) * (float(wind_mph) * 0.447)
+
+
+def class_of_pct(p):
+    """Index into CLASSES for a percentile (0=Low ... 4=Extreme)."""
+    if p is None:
+        return None
+    for i, c in enumerate(CLASSES):
+        if c["min"] <= p <= c["max"]:
+            return i
+    return len(CLASSES) - 1 if p > CLASSES[-1]["max"] else 0
+
+
+def fire_danger_class(res):
+    """Returns (class index, method used) for one report row."""
+    if FIRE_DANGER_METHOD == "matrix":
+        cv, cs = class_of_pct(res.get("vpd_pct")), class_of_pct(res.get("sfdi_pct"))
+        if cv is not None and cs is not None:
+            return FD_MATRIX[cv][cs], "matrix"
+    c = class_of_pct(res.get(FIRE_DANGER_INDEX + "_pct"))
+    return c, (FIRE_DANGER_INDEX if c is not None else None)
 
 
 def percentile_for(value, thresholds):
@@ -316,6 +349,7 @@ def main():
                 if k in thresholds:
                     pct = percentile_for(v, thresholds[k]) if (v is not None and pd.notna(v)) else None
                     res[k + "_pct"] = (100 - pct) if (pct is not None and k in INVERT_PCT) else pct
+            res["fd"], res["fd_method"] = fire_danger_class(res)
             return res
 
         obs_days = sorted(nfdr["summary_date"].unique())
@@ -403,6 +437,7 @@ def main():
         "forecast_pull_mst": latest_pull,
         "today": today,
         "classes": CLASSES, "fire_danger_index": FIRE_DANGER_INDEX,
+        "fire_danger_method": FIRE_DANGER_METHOD, "fd_matrix": FD_MATRIX,
         "report_cols": [{"key": k, "label": l, "group": g, "pct": p} for k, l, g, p in REPORT_COLS],
         "breakpoint_indices": BREAKPOINT_INDICES + ([*EXTRA_INDICES] if extra is not None else []), "inverted_pct": INVERT_PCT,
         "stations": stations,
