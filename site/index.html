@@ -513,7 +513,7 @@ function reportTable(f) {
     const v = r.values || {};
     const days = r.days || [];
     const sub = days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
-    const dcls = classForPct(v[META.fire_danger_index + "_pct"]);
+    const dcls = classForPct(v.fd_pct ?? v[META.fire_danger_index + "_pct"]);
     const start = ri === 3 ? " block-start" : "";
     h += `<tr class="${start}"><th class="period" rowspan="2"><b>${esc(r.label)}</b><span>${esc(sub)}</span><em>${r.type === "F" ? "Forecast" : "Observed"}</em></th>
       <td class="kind">Value</td>
@@ -538,7 +538,7 @@ function breakpointTable(f) {
         const [lo, hi] = b[k]; return `<td>${i === 0 ? "≤ " + fmtNum(hi) : i === f.breakpoints.length - 1 ? "≥ " + fmtNum(lo) : fmtNum(lo) + " – " + fmtNum(hi)}</td>`;
       }).join("")}<td><b>${esc(c.name)}</b></td></tr>`;
     }).join("")}</tbody></table>
-    <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(" and ")} show dryness percentile (higher = drier)` : ""}</div></div>`;
+    <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(", ")} show dryness percentile (higher = drier)` : ""}</div></div>`;
 }
 function legendHtml() {
   return `<div class="legend"><span class="lab">Fire Danger / Percentile legend</span>${CLASSES.map(c =>
@@ -570,6 +570,10 @@ function zoneReport(z) {
         out[k] = k.endsWith("_pct") ? Math.round(m) : +m.toFixed(DEC[k] || 0);
       });
     }
+    // Zone fire danger = the highest FDRA (as the plans pick the highest level for the zone)
+    const pk = META.fire_danger_index + "_pct";
+    const pcts = vals.map(v => v[pk]).filter(x => x != null);
+    if (vals.length) out.fd_pct = pcts.length ? Math.max(...pcts) : null;
     return {label: r0.label, days: r0.days, type: r0.type, values: vals.length ? out : null};
   })};
 }
@@ -578,7 +582,7 @@ function outlookTable(list, {groupByZone = false, zoneRow = null} = {}) {
   const periods = META.fdras[0].report.map(r => r.label);
   const pk = META.fire_danger_index + "_pct";
   const cell = v => {
-    const p = v ? v[pk] : null, c = classForPct(p);
+    const p = v ? (v.fd_pct ?? v[pk]) : null, c = classForPct(p);
     return `<td class="oc" style="background:${c ? c.color : "transparent"}">${c ? `<b>${esc(c.name)}</b> <small>${p}%</small>` : "—"}</td>`;
   };
   const head = META.fdras[0].report.map(r => `<th>${esc(r.label.replace("Average ", "Avg "))}<span>${esc(r.days.length === 1 ? dayLabel(r.days[0]) : r.days.length + " days")}</span></th>`).join("");
@@ -586,7 +590,7 @@ function outlookTable(list, {groupByZone = false, zoneRow = null} = {}) {
     const d = currentDanger(f);
     const off = ratings[f.key] && classByName(ratings[f.key].rating);
     return `<tr class="${isZone ? "zrow" : "frow"}" ${isZone ? `data-zone="${esc(f.zone)}"` : `data-fdra="${esc(f.key)}"`} tabindex="0">
-      <th>${isZone ? `<b>${esc(zoneLabel(f.zone))} zone</b> <small>(average)</small>` : esc(f.name)}</th>
+      <th>${isZone ? `<b>${esc(zoneLabel(f.zone))} zone</b> <small>(highest FDRA)</small>` : esc(f.name)}</th>
       ${f.report.map(r => cell(r.values)).join("")}
       <td class="oc off" style="background:${!isZone && off ? off.color : "transparent"}">${isZone ? "" : off ? `<b>${esc(off.name)}</b>` : `<span class="muted">Not set</span>`}</td></tr>`;
   };
@@ -620,12 +624,12 @@ function renderView() {
     const zr = withData.length ? zoneReport(z) : null;
     const ids = [...new Set(BY_ZONE[z].flatMap(f => f.sig_raws))];
     const today = zr?.report.find(r => r.label === "Today")?.values;
-    const c = classForPct(today ? today[META.fire_danger_index + "_pct"] : null);
+    const c = classForPct(today ? (today.fd_pct ?? today[META.fire_danger_index + "_pct"]) : null);
     const note = without ? ` · ${without} without data yet` : "";
     el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(zoneLabel(z))} zone</h2>
-        <div class="rating-box"><span style="color:var(--ink-3)">Zone average today</span><span class="badge" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "No data"}</span></div>
+        <div class="rating-box"><span style="color:var(--ink-3)">Zone today (highest FDRA)</span><span class="badge" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "No data"}</span></div>
         <div class="pmeta">${withData.length ? `Average of ${withData.length} FDRA${withData.length === 1 ? "" : "s"} with data (${withData.map(f => esc(f.name)).join(", ")})${note} · ${ids.length} stations` : `${BY_ZONE[z].length} FDRAs · no station data yet`}</div></div>
-        ${zr ? legendHtml() + reportTable(zr) + `<div class="footnote">Zone values and percentiles are the average of the FDRAs that have data; each FDRA percentile uses that FDRA's own history.</div>`
+        ${zr ? legendHtml() + reportTable(zr) + `<div class="footnote">Zone values and percentiles are the average of the FDRAs that have data (each against its own history). The zone Fire Danger is the highest FDRA.</div>`
              : `<div class="nodata"><b>No station data yet for this zone.</b><br>The zone summary appears automatically once its FDRAs are added to the GitHub data.</div>`}
         <h3 class="sub">FDRAs in this zone</h3>${outlookTable(BY_ZONE[z], {zoneRow: zr ? {...zr, zone: z} : null})}</section>`;
     return;
