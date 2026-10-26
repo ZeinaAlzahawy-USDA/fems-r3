@@ -428,6 +428,10 @@ def main():
                    {"id": sid, "nfdr": by_fm, "forecast": fc_fm, "wx_daily": wx_daily, "wx_forecast": wx_fc, "wx_hourly": wx_hourly})
 
         last_wx = wx_hourly[-1] if wx_hourly else None
+        # one-line summaries for the zone / FDRA popups: latest observed day and today's forecast
+        pick = lambda r: {k: r.get(k) for k in ("d", "tmax", "tmin", "rhmin", "wind", "gust", "precip", "vpdmax")} if r else None
+        nf = lambda r: {k: r.get(k) for k in ("d", "erc", "bi", "fm100", "fm1000", "kbdi")} if r else None
+        today_fc = {fm: nf(next((x for x in rows if x["d"] == today), None)) for fm, rows in fc_fm.items()}
         stations.append({
             "id": sid, "name": inf["station_name"], "wrcc": inf["wrcc_id"],
             "lat": rnd(inf["latitude"], 5), "lon": rnd(inf["longitude"], 5),
@@ -436,6 +440,9 @@ def main():
             "latest": {fm: {"d": v["d"], "erc": v["erc"], "bi": v["bi"], "fm100": v["fm100"],
                             "fm1000": v["fm1000"], "kbdi": v["kbdi"]} for fm, v in latest.items()},
             "wx": last_wx,
+            "wx_obs": pick(wx_daily[-1] if wx_daily else None),
+            "wx_today": pick(next((x for x in wx_fc if x["d"] == today), None)),
+            "fc_today": {fm: v for fm, v in today_fc.items() if v},
         })
 
     write_json(os.path.join(OUT_DIR, "meta.json"), {
