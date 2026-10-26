@@ -207,6 +207,14 @@ table.bpt.mtx td{min-width:64px;border:2px solid var(--surface)}
 .stn:hover{border-color:var(--ink)}
 .stn.cur{background:var(--ink);color:var(--bg);border-color:var(--ink);cursor:default}
 .mini tr.fc td{color:var(--ink-2)}
+.mini tr.avg td{border-top:2px solid var(--line-strong);font-weight:600}
+.mini td:first-child{white-space:nowrap}
+button.lnk{border:none;background:none;padding:0;color:var(--focus);cursor:pointer;text-decoration:underline;text-underline-offset:2px;font:inherit;text-align:left}
+button.lnk.back{display:inline-block;margin-bottom:10px;font-size:13px}
+.ph-row{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:4px}
+.badge.sm{font-size:12px;padding:1px 8px;border-radius:4px}
+.stn .badge.sm{margin-right:2px}
+.fdra-bar .details{margin-left:8px;padding:4px 10px;font-size:13px}
 .fmsel button{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:2px 9px;cursor:pointer;font-size:12.5px}
 .fmsel button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 
@@ -542,6 +550,7 @@ function renderCrumbs() {
   let h = `<span class="lbl">Viewing</span><button class="crumb${!state.zone ? " cur" : ""}" data-overview="1">Southwest</button>`;
   if (state.zone) h += `<span class="sep">›</span><button class="crumb${!state.fdra ? " cur" : ""}" data-zone="${esc(state.zone)}">${esc(zoneLabel(state.zone))} zone</button>`;
   if (state.fdra) h += `<span class="sep">›</span><span class="crumb cur">${esc(FDRA[state.fdra].name)} FDRA</span>`;
+  if (state.zone) h += `<button class="btn details" data-details="1">${state.fdra ? "FDRA details" : "Zone details"}</button>`;
   // quick switch chips
   if (state.zone) {
     h += `<span class="chips">` + BY_ZONE[state.zone].map(f => {
@@ -754,6 +763,9 @@ function go(zone, fdra, {zoom = true} = {}) {
   state.zone = zone || null; state.fdra = fdra || null;
   renderAll(); setHash();
   if (mapApi) { mapApi.refresh(); if (zoom) mapApi.zoomToView(); }
+  if (!state.zone) { panelCtx = null; $("#drawer").classList.remove("show"); mapApi?.highlightStation(null); }
+  else if (window.innerWidth >= 900) openPanelForState();
+  else panelCtx = state.fdra ? {type: "fdra", key: state.fdra} : {type: "zone", key: state.zone};
 }
 const selectOverview = () => go(null, null);
 const selectZone = z => go(z, null);
@@ -857,6 +869,106 @@ let _chartResize;
 window.addEventListener("resize", () => { clearTimeout(_chartResize); _chartResize = setTimeout(() => { const f = FDRA[state.fdra]; if (f && CHART_CACHE[f.slug]) drawCharts(f, CHART_CACHE[f.slug]); }, 200); });
 
 /* ---------------- station drawer ---------------- */
+/* ---------------- zone / FDRA popups ---------------- */
+let panelDay = "obs";          // "obs" = latest observed day (yesterday), "fc" = today's forecast
+let panelTab = "fd";
+let panelCtx = null;           // what the popup is showing: {type:"zone"|"fdra", key}
+const ratingBadge = f => { const d = currentDanger(f); return `<span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : (f.noData ? "No data yet" : "No data")}</span>`; };
+const periodVals = f => (f.report.find(r => r.label === (panelDay === "obs" ? "Yesterday" : "Today")) || {}).values || {};
+function stationDay(st, fm) {
+  if (!st) return {};
+  const n = panelDay === "obs" ? (st.latest || {})[fm] : (st.fc_today || {})[fm];
+  const w = panelDay === "obs" ? st.wx_obs : st.wx_today;
+  return {...(w || {}), ...(n || {})};
+}
+function daySwitch() {
+  const dl = panelDay === "obs" ? META.latest_obs_date : META.today;
+  return `<div class="fmsel"><span class="lbl">Day</span><button data-pday="obs" aria-pressed="${panelDay === "obs"}">Yesterday</button><button data-pday="fc" aria-pressed="${panelDay === "fc"}">Today</button><span class="lbl" style="margin-left:6px">${esc(dayLabel(dl))} · ${panelDay === "obs" ? "Observed" : "Forecast"}</span></div>`;
+}
+function panelTabs() {
+  return `<div class="dtabs" role="tablist"><button role="tab" data-ptab="fd" aria-selected="${panelTab === "fd"}">Fire Danger</button><button role="tab" data-ptab="wx" aria-selected="${panelTab === "wx"}">Weather</button></div>`;
+}
+function stationChips(ids, cur) {
+  return `<div class="fst-l">${ids.map(sid => { const st = STATIONS[sid];
+    return `<button class="stn${sid === cur ? " cur" : ""}" ${sid === cur ? 'aria-current="true"' : `data-station="${esc(sid)}"`}><b>${esc(sid)}</b>${st ? esc(titleCase(st.name)) : ""}</button>`; }).join("")}</div>`;
+}
+function openFdraPanel(key) {
+  const f = FDRA[key]; if (!f) return;
+  panelCtx = {type: "fdra", key};
+  $("#dTitle").textContent = f.name + " FDRA";
+  $("#dSub").textContent = `Zone ${zoneLabel(f.zone)}${f.fuel_model ? " · Fuel model " + f.fuel_model : ""} · ${f.sig_raws.length} station${f.sig_raws.length === 1 ? "" : "s"}`;
+  const body = () => {
+    if (f.noData) return `<div class="nodata"><b>No station data yet for this FDRA.</b><br>Station details will be available once station data is added for this FDRA.</div>`;
+    const v = periodVals(f), fm = f.fuel_model || "Y";
+    let t;
+    if (panelTab === "fd") {
+      const row = (label, x, avg) => `<tr${avg ? ' class="avg"' : ""}><td>${label}</td><td>${fmtNum(x.erc)}</td><td>${fmtNum(x.bi)}</td><td>${fmtNum(x.fm100, 1)}</td><td>${fmtNum(x.fm1000, 1)}</td><td>${fmtNum(x.kbdi)}</td></tr>`;
+      t = `<table class="mini"><thead><tr><th>Station</th><th>ERC</th><th>BI</th><th>100h</th><th>1000h</th><th>KBDI</th></tr></thead><tbody>
+        ${f.sig_raws.map(sid => row(`<button class="lnk" data-station="${esc(sid)}">${esc(titleCase(STATIONS[sid]?.name || sid))}</button>`, stationDay(STATIONS[sid], fm), false)).join("")}
+        ${row("<b>FDRA average</b>", v, true)}</tbody></table>
+        <div class="footnote">Fuel model ${esc(fm)}. ERC and BI are daily maximums; fuel moistures are daily minimums.</div>`;
+    } else {
+      const row = (label, x, avg) => `<tr${avg ? ' class="avg"' : ""}><td>${label}</td><td>${fmtNum(x.tmax)}</td><td>${fmtNum(x.rhmin)}</td><td>${fmtNum(x.wind)}</td><td>${fmtNum(x.gust)}</td><td>${fmtNum(x.precip, 2)}</td><td>${fmtNum(x.vpdmax ?? x.vpd)}</td></tr>`;
+      t = `<table class="mini"><thead><tr><th>Station</th><th>Max T</th><th>Min RH</th><th>Wind</th><th>Gust</th><th>Precip</th><th>VPD</th></tr></thead><tbody>
+        ${f.sig_raws.map(sid => row(`<button class="lnk" data-station="${esc(sid)}">${esc(titleCase(STATIONS[sid]?.name || sid))}</button>`, stationDay(STATIONS[sid], fm), false)).join("")}
+        ${row("<b>FDRA average</b>", v, true)}</tbody></table>
+        <div class="footnote">Temperature °F, RH %, wind and gust mph (daily maximum), precipitation in, VPD Pa.</div>`;
+    }
+    return daySwitch() + t;
+  };
+  $("#dBody").innerHTML = `<div class="ph-row"><span class="muted">${(ratings[f.key] && classByName(ratings[f.key].rating)) ? "Official rating" : "Calculated rating today"}</span>${ratingBadge(f)}</div>
+    <h4>FDRA Stations</h4>${f.sig_raws.length ? stationChips(f.sig_raws) : '<div class="muted">No stations assigned yet.</div>'}
+    ${panelTabs()}<div id="dPane">${body()}</div>`;
+  wirePanel(() => openFdraPanel(key));
+  showDrawer();
+}
+function openZonePanel(z) {
+  const list = BY_ZONE[z]; if (!list) return;
+  panelCtx = {type: "zone", key: z};
+  const ids = [...new Set(list.flatMap(f => f.sig_raws))];
+  const w = zoneWorst(z);
+  $("#dTitle").textContent = zoneLabel(z) + " Zone";
+  $("#dSub").textContent = `${list.length} FDRA${list.length === 1 ? "" : "s"} · ${ids.length} station${ids.length === 1 ? "" : "s"}`;
+  const body = () => {
+    const withData = list.filter(f => !f.noData);
+    if (!withData.length) return `<div class="nodata"><b>No station data yet for this zone.</b><br>Zone details will be available once station data is added for its FDRAs.</div>`;
+    let t;
+    if (panelTab === "fd") {
+      t = `<table class="mini"><thead><tr><th>FDRA</th><th>ERC</th><th>BI</th><th>SFDI</th><th>VPD</th><th>Rating</th></tr></thead><tbody>
+        ${list.map(f => { const v = f.noData ? {} : periodVals(f), d = fdOf(f.noData ? null : v);
+          return `<tr><td><button class="lnk" data-pfdra="${esc(f.key)}">${esc(f.name)}</button></td><td>${fmtNum(v.erc)}</td><td>${fmtNum(v.bi)}</td><td>${fmtNum(v.sfdi)}</td><td>${fmtNum(v.vpd)}</td>
+            <td><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span></td></tr>`; }).join("")}</tbody></table>
+        <div class="footnote">FDRA averages. Rating is the calculated fire danger for the selected day.</div>`;
+    } else {
+      t = `<table class="mini"><thead><tr><th>FDRA</th><th>Max T</th><th>Min RH</th><th>Wind</th><th>Gust</th><th>Precip</th></tr></thead><tbody>
+        ${list.map(f => { const v = f.noData ? {} : periodVals(f);
+          return `<tr><td><button class="lnk" data-pfdra="${esc(f.key)}">${esc(f.name)}</button></td><td>${fmtNum(v.tmax)}</td><td>${fmtNum(v.rhmin)}</td><td>${fmtNum(v.wind)}</td><td>${fmtNum(v.gust)}</td><td>${fmtNum(v.precip, 2)}</td></tr>`; }).join("")}</tbody></table>
+        <div class="footnote">FDRA averages. Temperature °F, RH %, wind and gust mph (daily maximum), precipitation in.</div>`;
+    }
+    return daySwitch() + t;
+  };
+  $("#dBody").innerHTML = `<div class="ph-row"><span class="muted">Highest FDRA rating today</span><span class="badge sm" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
+    <h4>FDRAs</h4><div class="fst-l">${list.map(f => `<button class="stn" data-pfdra="${esc(f.key)}">${ratingBadge(f)}${esc(f.name)}</button>`).join("")}</div>
+    <h4>Zone Stations</h4>${ids.length ? stationChips(ids) : '<div class="muted">No stations assigned yet.</div>'}
+    ${panelTabs()}<div id="dPane">${body()}</div>`;
+  wirePanel(() => openZonePanel(z));
+  showDrawer();
+}
+function wirePanel(rerender) {
+  $("#dBody").onclick = e => {
+    const t = e.target.closest("[data-ptab],[data-pday],[data-pfdra]"); if (!t) return;
+    e.stopPropagation();
+    if (t.dataset.ptab) { panelTab = t.dataset.ptab; rerender(); }
+    else if (t.dataset.pday) { panelDay = t.dataset.pday; rerender(); }
+    else if (t.dataset.pfdra) selectFdra(t.dataset.pfdra);
+  };
+}
+function showDrawer() { $("#drawer").classList.add("show"); $("#drawer").scrollTop = 0; }
+function openPanelForState() {
+  if (state.fdra) openFdraPanel(state.fdra);
+  else if (state.zone) openZonePanel(state.zone);
+}
+
 const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 const compass = d => d == null ? "—" : COMPASS[Math.round(((+d % 360) / 22.5)) % 16];
 let drawerTab = "fd", wxMode = "daily";
@@ -873,7 +985,8 @@ async function openStation(id) {
         return `<button class="stn${cur ? " cur" : ""}" ${cur ? "aria-current=\"true\"" : `data-station="${esc(sid)}"`}><b>${esc(sid)}</b>${st ? esc(titleCase(st.name)) : ""}</button>`; }).join("")}</div></div>`;
   }).join("");
   const wx = s.wx;
-  $("#dBody").innerHTML = `<dl class="kv"><dt>Latitude</dt><dd>${s.lat}</dd><dt>Longitude</dt><dd>${s.lon}</dd><dt>FDRAs</dt><dd>${fdraLinks}</dd></dl>
+  const back = panelCtx ? `<button class="lnk back" data-back="1">← Back to ${esc(panelCtx.type === "fdra" ? FDRA[panelCtx.key].name + " FDRA" : zoneLabel(panelCtx.key) + " Zone")}</button>` : "";
+  $("#dBody").innerHTML = `${back}<dl class="kv"><dt>Latitude</dt><dd>${s.lat}</dd><dt>Longitude</dt><dd>${s.lon}</dd><dt>FDRAs</dt><dd>${fdraLinks}</dd></dl>
     ${fdraStations ? `<h4>FDRA Stations</h4>${fdraStations}` : ""}
     ${wx ? `<h4>Latest weather · ${esc(fmtMst(wx.h))} LST</h4><dl class="kv">
       <dt>Temperature</dt><dd>${fmtNum(wx.t)} °F</dd><dt>Rel. humidity</dt><dd>${fmtNum(wx.rh)} %</dd>
@@ -916,6 +1029,7 @@ async function openStation(id) {
   };
   render();
   $("#dBody").onclick = e => {
+    if (e.target.closest("[data-back]")) { e.stopPropagation(); return openPanelForState(); }
     const t = e.target.closest("[data-dtab],[data-fm],[data-wx]"); if (!t) return;
     if (t.dataset.dtab) drawerTab = t.dataset.dtab;
     if (t.dataset.fm) curFm = t.dataset.fm;
@@ -953,6 +1067,7 @@ window.addEventListener("resize", closeZoneMenu);
 window.addEventListener("scroll", positionMenu, {passive: true});
 $("#zoneTabs").addEventListener("scroll", positionMenu, {passive: true});
 $("#dClose").onclick = () => { $("#drawer").classList.remove("show"); mapApi?.highlightStation(null); };
+document.addEventListener("click", e => { if (e.target.closest("[data-details]")) { e.preventDefault(); openPanelForState(); } });
 $("#btnZone").onclick = () => mapApi?.zoomToView();
 $("#btnRegion").onclick = () => mapApi?.zoomRegion();
 $("#btnUS").onclick = () => mapApi?.zoomUS();
