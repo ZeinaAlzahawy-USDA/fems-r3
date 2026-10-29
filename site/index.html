@@ -100,11 +100,12 @@ nav.zones{background:var(--surface);border-bottom:1px solid var(--line);position
 
 /* map */
 .map-card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
-#map{height:clamp(420px,70vh,860px);width:100%}
+#map{height:clamp(440px,74vh,910px);width:100%}
 .map-tools{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:5}
 .map-tools .btn{box-shadow:var(--shadow)}
-.map-legend{position:absolute;right:12px;bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:5;box-shadow:var(--shadow);max-width:min(430px,calc(100% - 24px))}
+.map-legend{position:absolute;right:12px;bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:5;box-shadow:var(--shadow);max-width:calc(100% - 24px)}
 .map-legend .row{display:flex;gap:10px;flex-wrap:wrap}
+@media (min-width:701px){ .map-legend .row{flex-wrap:nowrap;white-space:nowrap} }
 .map-legend .it{display:flex;gap:5px;align-items:center}
 .map-legend .sw{width:12px;height:12px;border-radius:50%;border:1px solid rgba(0,0,0,.3)}
 .map-msg{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;color:var(--ink-2);background:var(--surface-2)}
@@ -342,7 +343,7 @@ footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40p
   .map-tools .btn{padding:5px 8px;font-size:12.5px}
   table.bpt td,table.bpt th{white-space:nowrap;padding:4px 8px}
 }
-@media (min-width:1900px){ .wrap{max-width:1800px} #map{height:72vh} }
+@media (min-width:1900px){ .wrap{max-width:1800px} #map{height:76vh} }
 </style>
 </head>
 <body>
@@ -1356,7 +1357,7 @@ function startMap() {
         if (state.zone) return zoomKeys(BY_ZONE[state.zone].map(f => f.key));
         this.zoomRegion();
       },
-      zoomRegion() { setPadding(openDrawerPad()); view.goTo(fitExtent(new Extent({xmin: -115.05, ymin: 31.05, xmax: -102.75, ymax: 37.3, spatialReference: {wkid: 4326}}))).catch(() => {}); },
+      zoomRegion() { setPadding(openDrawerPad()); view.goTo(fitExtent(new Extent({xmin: -115.05, ymin: 31.05, xmax: -102.75, ymax: 37.62, spatialReference: {wkid: 4326}}))).catch(() => {}); },
       zoomUS() { setPadding(openDrawerPad()); view.goTo(fitExtent(new Extent({xmin: -125, ymin: 24.5, xmax: -66.5, ymax: 49.5, spatialReference: {wkid: 4326}}))).catch(() => {}); },
       highlightStation(id) { selSt = id; drawStations(); }
     };
