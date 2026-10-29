@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write        # lets this run start the website rebuild
 
 concurrency:
   group: fems-data
@@ -45,3 +46,6 @@ jobs:
       - name: Upload history to release
         run: |
           gh release upload obs-history data/history_hourly_weather.csv data/history_hourly_nfdr.csv --clobber
+
+      - name: Refresh the website
+        run: gh workflow run website.yaml

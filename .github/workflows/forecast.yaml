@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write        # lets this run start the website rebuild
 
 concurrency:
   group: fems-data
@@ -53,3 +54,6 @@ jobs:
       - name: Upload forecast files to release
         run: |
           gh release upload forecast-data data/30days_forecast_hourly_weather.csv data/30days_forecast_hourly_nfdr.csv data/history_forecast_daily_weather.csv data/history_forecast_daily_nfdr.csv --clobber
+
+      - name: Refresh the website
+        run: gh workflow run website.yaml

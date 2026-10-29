@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write        # lets this run start the website rebuild
 
 concurrency:
   group: fems-data
@@ -55,3 +56,6 @@ jobs:
       - name: Upload daily FDRA output
         run: |
           gh release upload obs-history data/obs_nfdr_daily_fdra.csv --clobber
+
+      - name: Refresh the website
+        run: gh workflow run website.yaml
