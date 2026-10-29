@@ -100,10 +100,10 @@ nav.zones{background:var(--surface);border-bottom:1px solid var(--line);position
 
 /* map */
 .map-card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
-#map{height:clamp(340px,55vh,640px);width:100%}
+#map{height:clamp(420px,70vh,860px);width:100%}
 .map-tools{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:5}
 .map-tools .btn{box-shadow:var(--shadow)}
-.map-legend{position:absolute;left:12px;bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:5;box-shadow:var(--shadow);max-width:calc(100% - 24px)}
+.map-legend{position:absolute;right:12px;bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:5;box-shadow:var(--shadow);max-width:min(430px,calc(100% - 24px))}
 .map-legend .row{display:flex;gap:10px;flex-wrap:wrap}
 .map-legend .it{display:flex;gap:5px;align-items:center}
 .map-legend .sw{width:12px;height:12px;border-radius:50%;border:1px solid rgba(0,0,0,.3)}
@@ -342,7 +342,7 @@ footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40p
   .map-tools .btn{padding:5px 8px;font-size:12.5px}
   table.bpt td,table.bpt th{white-space:nowrap;padding:4px 8px}
 }
-@media (min-width:1900px){ .wrap{max-width:1800px} #map{height:62vh} }
+@media (min-width:1900px){ .wrap{max-width:1800px} #map{height:72vh} }
 </style>
 </head>
 <body>
@@ -1219,7 +1219,7 @@ function startMap() {
   ], (Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Extent, esriId, OAuthInfo, Portal, GeoJSONLayer) => {
     setupAuth(esriId, OAuthInfo, Portal);
     const map = new Map({basemap: "topo-vector"});
-    const view = new MapView({container: "map", map, center: [-108.6, 34.3], zoom: 6, constraints: {minZoom: 3},
+    const view = new MapView({container: "map", map, center: [-108.6, 34.3], zoom: 6, constraints: {minZoom: 3, snapToZoom: false},
       popup: {dockEnabled: false}, ui: {components: ["zoom", "attribution"]}});
     const focus = CFG.focusStates.map(n => `'${n.replace(/'/g, "''")}'`).join(",");
     const geoEl = document.getElementById("statesGeo");
@@ -1310,6 +1310,14 @@ function startMap() {
       items.sort((a, b) => a.rank - b.rank);           // highlighted FDRAs drawn on top so their frame is not covered
       fdraPolys.addMany(items.map(i => i.g));
     }
+    // Fit extents in the map's own (Web Mercator) units so the whole area shows, with nothing cut at the top or bottom.
+    function fitExtent(ex) {
+      const sr = ex.spatialReference;
+      if (!(sr && (sr.wkid === 4326 || sr.isGeographic))) return ex;
+      const R = 6378137, d = Math.PI / 180, clampLat = v => Math.max(-85, Math.min(85, v));
+      const y = lat => R * Math.log(Math.tan(Math.PI / 4 + clampLat(lat) * d / 2));
+      return new Extent({xmin: ex.xmin * d * R, xmax: ex.xmax * d * R, ymin: y(ex.ymin), ymax: y(ex.ymax), spatialReference: {wkid: 3857}});
+    }
     function extentOf(ids) {
       const pts = ids.map(id => STATIONS[id]).filter(Boolean);
       if (!pts.length) return null;
@@ -1318,13 +1326,15 @@ function startMap() {
     }
     async function zoomKeys(keys) {
       const shapes = (await loadFdraShapes() || []).filter(x => keys.includes(x.key));
+      // On desktop the details popup opens on the right for a zone/FDRA: keep the selection clear of it.
+      setPadding(innerWidth >= 900 && !drawerMin ? Math.min(470, innerWidth - 32) + 24 : 0);
       if (shapes.length) {
         let ex = shapes[0].geometry.extent.clone();
         shapes.slice(1).forEach(x => ex = ex.union(x.geometry.extent));
-        return view.goTo(ex.expand(1.15)).catch(() => {});
+        return view.goTo(fitExtent(ex).expand(1.12)).catch(() => {});
       }
       const ex = extentOf(keys.flatMap(k => FDRA[k].sig_raws));
-      if (ex) view.goTo(ex.expand(1.4)).catch(() => {});
+      if (ex) view.goTo(fitExtent(ex).expand(1.4)).catch(() => {});
     }
 
     view.on("click", async evt => {
@@ -1346,10 +1356,21 @@ function startMap() {
         if (state.zone) return zoomKeys(BY_ZONE[state.zone].map(f => f.key));
         this.zoomRegion();
       },
-      zoomRegion() { view.goTo(new Extent({xmin: -115.2, ymin: 31.1, xmax: -102.8, ymax: 37.2, spatialReference: {wkid: 4326}})).catch(() => {}); },
-      zoomUS() { view.goTo(new Extent({xmin: -125, ymin: 24.5, xmax: -66.5, ymax: 49.5, spatialReference: {wkid: 4326}})).catch(() => {}); },
+      zoomRegion() { setPadding(openDrawerPad()); view.goTo(fitExtent(new Extent({xmin: -115.05, ymin: 31.05, xmax: -102.75, ymax: 37.3, spatialReference: {wkid: 4326}}))).catch(() => {}); },
+      zoomUS() { setPadding(openDrawerPad()); view.goTo(fitExtent(new Extent({xmin: -125, ymin: 24.5, xmax: -66.5, ymax: 49.5, spatialReference: {wkid: 4326}}))).catch(() => {}); },
       highlightStation(id) { selSt = id; drawStations(); }
     };
+    // Keep the zones clear of the zoom buttons on the right (desktop); the map content sits a little to the left.
+    let padExtra = 0;
+    // Width to keep clear on the right while the details popup is open (desktop only).
+    const openDrawerPad = () => innerWidth >= 900 && !drawerMin && $("#drawer").classList.contains("show") ? Math.min(470, innerWidth - 32) + 24 : 0;
+    function setPadding(extra) {
+      if (extra !== undefined) padExtra = extra;
+      const tools = document.querySelector(".map-tools");
+      const right = innerWidth > 700 && tools ? Math.max(tools.offsetWidth + 24, padExtra) : 0;
+      view.padding = {top: 0, left: 0, bottom: 0, right};
+    }
+    setPadding(); addEventListener("resize", () => setPadding());
     view.when(() => { mapApi.refresh(); mapApi.zoomToView(); }, () => $("#mapMsg").classList.add("show"));
   }, () => $("#mapMsg").classList.add("show"));
 }
