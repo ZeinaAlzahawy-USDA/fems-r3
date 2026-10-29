@@ -1,5 +1,6 @@
 import os
 import math
+import time
 import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
@@ -122,24 +123,43 @@ query NfdrsObs(
 """
 
 # ========= REQUEST HELPER =========
+RETRY_TRIES = 4                          # total attempts per request
+RETRY_WAIT_SECONDS = 30                  # wait 30s, 60s, 90s between attempts
+RETRY_STATUS = {429, 500, 502, 503, 504}  # FEMS busy / gateway timeout
+
 def gql(query, variables=None):
-    r = requests.post(
-        ENDPOINT,
-        headers=HEADERS,
-        auth=AUTH,
-        json={"query": query, "variables": variables},
-        timeout=300
-    )
-    print(f"[HTTP {r.status_code}] {ENDPOINT}")
+    # FEMS sometimes answers a large request with "504 Gateway Time-out".
+    # Instead of failing the whole run, wait and ask again (same request, same data).
+    for attempt in range(1, RETRY_TRIES + 1):
+        try:
+            r = requests.post(
+                ENDPOINT,
+                headers=HEADERS,
+                auth=AUTH,
+                json={"query": query, "variables": variables},
+                timeout=300
+            )
+            print(f"[HTTP {r.status_code}] {ENDPOINT}")
+            ct = r.headers.get("content-type", "")
+            busy = r.status_code in RETRY_STATUS or "application/json" not in ct
+            if busy:
+                problem = f"HTTP {r.status_code}: {r.text[:120]!r}"
+        except (requests.Timeout, requests.ConnectionError) as e:
+            busy, problem = True, f"{type(e).__name__}: {e}"
 
-    ct = r.headers.get("content-type", "")
-    j = r.json() if "application/json" in ct else {"errors": [{"message": r.text[:300]}]}
+        if busy:
+            if attempt == RETRY_TRIES:
+                raise RuntimeError(f"FEMS did not answer after {RETRY_TRIES} attempts. Last problem: {problem}")
+            wait = RETRY_WAIT_SECONDS * attempt
+            print(f"  FEMS busy ({problem}). Attempt {attempt} of {RETRY_TRIES} - trying again in {wait}s")
+            time.sleep(wait)
+            continue
 
-    if j.get("errors"):
-        raise RuntimeError(j["errors"])
-    r.raise_for_status()
-
-    return j["data"]
+        j = r.json()
+        if j.get("errors"):
+            raise RuntimeError(j["errors"])
+        r.raise_for_status()
+        return j["data"]
 
 # ========= DIAGNOSTICS =========
 def report(label, df, type_col):
@@ -192,22 +212,43 @@ if not df_wx.empty:
 report("weather pull (observed only)", df_wx, "observation_type")
 
 # ========= PULL: NFDR (30-day window, per fuel model) =========
+# The 30 days are requested in smaller pieces so FEMS answers faster and does not time out.
+# Pieces share their edge day, so nothing can fall between them; the repeated edge-day rows
+# are removed right after (identical rows from the same pull).
+NFDR_CHUNK_DAYS = 10
+
+def date_chunks(first, last, size):
+    d0 = datetime.strptime(first, "%Y-%m-%d")
+    d1 = datetime.strptime(last, "%Y-%m-%d")
+    while True:
+        d_end = min(d0 + timedelta(days=size), d1)
+        yield d0.strftime("%Y-%m-%d"), d_end.strftime("%Y-%m-%d")
+        if d_end >= d1:
+            break
+        d0 = d_end
+
 nfdr_frames = []
 for fm in FUEL_MODELS:
-    nf = gql(
-        Q_NFDRS_OBS,
-        {
-            "fuelModels": fm,
-            "stationIds": station_ids_csv,
-            "startDateRange": start_date,
-            "endDateRange": end_date,
-            "dateTimeFormat": "UTC"
-        }
-    )["nfdrsObs"]["data"]
-    print(f"fuel model {fm}: {len(nf)} rows")
-    nfdr_frames.append(pd.DataFrame(nf))
+    fm_rows = 0
+    for chunk_start, chunk_end in date_chunks(start_date, end_date, NFDR_CHUNK_DAYS):
+        nf = gql(
+            Q_NFDRS_OBS,
+            {
+                "fuelModels": fm,
+                "stationIds": station_ids_csv,
+                "startDateRange": chunk_start,
+                "endDateRange": chunk_end,
+                "dateTimeFormat": "UTC"
+            }
+        )["nfdrsObs"]["data"]
+        print(f"fuel model {fm}, {chunk_start} to {chunk_end}: {len(nf)} rows")
+        fm_rows += len(nf)
+        nfdr_frames.append(pd.DataFrame(nf))
+    print(f"fuel model {fm}: {fm_rows} rows (before removing shared edge days)")
 
 df_nfdr = pd.concat(nfdr_frames, ignore_index=True) if nfdr_frames else pd.DataFrame()
+if not df_nfdr.empty:
+    df_nfdr = df_nfdr.drop_duplicates().reset_index(drop=True)
 report("nfdr pull (raw)", df_nfdr, "nfdr_type")
 
 # Observed only: keep all non-F rows
