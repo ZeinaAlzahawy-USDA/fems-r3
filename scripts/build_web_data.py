@@ -137,10 +137,21 @@ def load_station_list(name):
         return [norm_id(line.split(",")[0]) for line in f if line.strip()]
 
 
+def clean_blanks(o):
+    """Blank cells (NaN) become empty (null) so the JSON stays valid, e.g. new FDRAs without an FDRA_ID."""
+    if isinstance(o, float) and (o != o or o in (float("inf"), float("-inf"))):
+        return None
+    if isinstance(o, dict):
+        return {k: clean_blanks(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [clean_blanks(v) for v in o]
+    return o
+
+
 def write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
-        json.dump(obj, f, separators=(",", ":"), allow_nan=False)
+        json.dump(clean_blanks(obj), f, separators=(",", ":"), allow_nan=False)
 
 
 def vpd_pa(tmax_f, rhmin):
