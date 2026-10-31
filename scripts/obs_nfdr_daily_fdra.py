@@ -240,7 +240,7 @@ def main():
         PERCENTILE_IN,
     )
 
-    # Ignore trailing blank rows and use the configured 19 FDRA records only.
+    # Ignore trailing blank rows and use the configured FDRA records only.
     fdra = fdra[
         fdra["FDRA_ZONE"].str.strip().ne("")
         & fdra["SIG_RAWS"].str.strip().ne("")
@@ -343,16 +343,19 @@ def main():
             historical["FDRA_ZONE"].str.strip().eq(zone["FDRA_ZONE"].strip())
         ]
         if zone_history.empty:
-            raise ValueError(f"No percentile rows for {zone['FDRA_ZONE']}")
-
-        for average_column, percentile_column in AVERAGE_TO_PERCENTILE.items():
-            daily[percentile_column] = daily[average_column].apply(
-                lambda value, column=average_column: percentile_for_value(
-                    value,
-                    zone_history[AVERAGE_TO_HISTORICAL[column]],
-                    zone_history["Percentiles"],
+            # FDRA has no percentile history yet: keep its daily averages, leave percentiles blank
+            print(f"WARNING: no percentile history for {zone['FDRA_ZONE']}; percentiles left blank")
+            for percentile_column in AVERAGE_TO_PERCENTILE.values():
+                daily[percentile_column] = None
+        else:
+            for average_column, percentile_column in AVERAGE_TO_PERCENTILE.items():
+                daily[percentile_column] = daily[average_column].apply(
+                    lambda value, column=average_column: percentile_for_value(
+                        value,
+                        zone_history[AVERAGE_TO_HISTORICAL[column]],
+                        zone_history["Percentiles"],
+                    )
                 )
-            )
 
         for average_column in SOURCE_TO_AVERAGE.values():
             daily[average_column] = daily[average_column].round(2)
