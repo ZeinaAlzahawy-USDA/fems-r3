@@ -286,7 +286,21 @@ table.outlook td.oc{color:var(--cls-ink)}
 table.outlook td.oc small{opacity:.75}
 table.outlook td.off{border-left:2px solid var(--line-strong)}
 table.outlook tr.frow,table.outlook tr.zrow,table.outlook tr.zhead{cursor:pointer}
-table.outlook tr.shead th{background:var(--ink);color:var(--surface);font-size:15px;letter-spacing:.4px;text-transform:uppercase;padding:9px 12px;text-align:left}
+/* overview: state blocks */
+.state-block{margin:18px 0 26px;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.08);background:var(--surface)}
+.state-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 20px;color:#fff;
+  background:linear-gradient(115deg,#0b1a3d 0%,#14306b 45%,#2a5298 100%)}
+.state-head h3{margin:0;font-size:20px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#fff}
+.state-head h3 + span{display:block;margin-top:2px;font-size:12.5px;color:rgba(255,255,255,.85);letter-spacing:.3px}
+.state-badge{display:flex;align-items:center;gap:8px}
+.state-badge small{font-size:11.5px;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.6px}
+.state-badge .badge{color:var(--cls-ink);border:1px solid rgba(255,255,255,.6)}
+.state-block .tbl-scroll{border:none;border-radius:0}
+.state-block table.outlook thead th{background:var(--surface-2);border-bottom:2px solid var(--line-strong)}
+.state-block table.outlook{table-layout:fixed}
+.state-block table.outlook thead th:first-child{width:24%}
+.state-block table.outlook thead th:last-child{width:11%}
+.state-block table.outlook tbody th{white-space:normal}
 table.outlook tr.frow:hover th,table.outlook tr.zrow:hover th{text-decoration:underline}
 table.outlook tr.zhead th{background:var(--surface-2);font-size:14px;padding-top:10px;border-top:2px solid var(--line-strong)}
 table.outlook tr.zhead small{font-weight:500;color:var(--focus);margin-left:6px}
@@ -693,7 +707,7 @@ function zoneReport(z) {
   })};
 }
 
-function outlookTable(list, {groupByZone = false, zoneRow = null} = {}) {
+function outlookTable(list, {groupByZone = false, zoneRow = null, zones = null, footnote = true} = {}) {
   const periods = META.fdras[0].report.map(r => r.label);
   const pk = META.fire_danger_index + "_pct";
   const cell = v => {
@@ -712,21 +726,31 @@ function outlookTable(list, {groupByZone = false, zoneRow = null} = {}) {
   let body = "";
   if (zoneRow) body += row({...zoneRow, zone: zoneRow.zone}, true);
   if (groupByZone) {
-    const listed = new Set(STATE_GROUPS.flatMap(g => g[1]));
-    const groups = [...STATE_GROUPS, ["Other", ZONES().filter(z => !listed.has(z))]];
-    groups.forEach(([state, zones]) => { zones = zones.filter(z => BY_ZONE[z]); if (!zones.length) return;
-    body += `<tr class="shead"><th colspan="${periods.length + 2}">${esc(state)}</th></tr>`;
-    zones.forEach(z => {
+    (zones || ZONES()).filter(z => BY_ZONE[z]).forEach(z => {
       const w = zoneWorst(z);
       body += `<tr class="zhead" data-zone="${esc(z)}" tabindex="0"><th colspan="${periods.length + 2}"><span class="sw" style="background:${w ? w.color : "transparent"}"></span>${esc(zoneLabel(z))} <small>${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"} · View zone ›</small></th></tr>`;
       body += BY_ZONE[z].map(f => row(f, false)).join("");
     });
-    });
   } else body += list.map(f => row(f, false)).join("");
   return `<div class="tbl-scroll"><table class="outlook"><thead><tr><th>FDRA</th>${head}<th>Official rating</th></tr></thead><tbody>${body}</tbody></table></div>
-    <div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Select a row for details.</div>`;
+    ${footnote ? `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Select a row for details.</div>` : ""}`;
 }
 
+// Overview: one block per state — colored state header, then its own table (with column headers)
+function stateBlocks() {
+  const listed = new Set(STATE_GROUPS.flatMap(g => g[1]));
+  const groups = [...STATE_GROUPS, ["Other", ZONES().filter(z => !listed.has(z))]];
+  const out = groups.map(([state, zones]) => {
+    zones = zones.filter(z => BY_ZONE[z]);
+    if (!zones.length) return "";
+    const fdras = zones.flatMap(z => BY_ZONE[z]), w = worstOf(fdras);
+    return `<section class="state-block"><header class="state-head">
+        <div><h3>${esc(state)}</h3><span>${zones.length} zone${zones.length === 1 ? "" : "s"} · ${fdras.length} FDRAs · ${esc(zones.join(" · "))}</span></div>
+        <div class="state-badge"><small>Highest FDRA</small><span class="badge" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
+      </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false})}</section>`;
+  }).join("");
+  return out + `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Select a row for details.</div>`;
+}
 function stationLinks(ids) {
   return ids.map(id => STATIONS[id] ? `<button class="st" data-station="${esc(id)}">${esc(titleCase(STATIONS[id].name))}</button>` : esc(id)).join(", ");
 }
@@ -736,7 +760,7 @@ function renderView() {
   if (!state.zone) {               // leadership view
     el.innerHTML = `<section class="panel"><div class="phead"><h2>Southwest fire danger outlook</h2>
         <div class="pmeta">${META.fdras.length} FDRAs across ${ZONES().length} zones. Select a zone above or a row below for details.</div></div>
-        ${legendHtml()}${outlookTable(META.fdras, {groupByZone: true})}</section>`;
+        ${legendHtml()}${stateBlocks()}</section>`;
     return;
   }
   if (!state.fdra) {               // zone view
