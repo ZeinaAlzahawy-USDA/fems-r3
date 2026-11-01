@@ -286,6 +286,7 @@ table.outlook td.oc{color:var(--cls-ink)}
 table.outlook td.oc small{opacity:.75}
 table.outlook td.off{border-left:2px solid var(--line-strong)}
 table.outlook tr.frow,table.outlook tr.zrow,table.outlook tr.zhead{cursor:pointer}
+table.outlook tr.shead th{background:var(--ink);color:var(--surface);font-size:15px;letter-spacing:.4px;text-transform:uppercase;padding:9px 12px;text-align:left}
 table.outlook tr.frow:hover th,table.outlook tr.zrow:hover th{text-decoration:underline}
 table.outlook tr.zhead th{background:var(--surface-2);font-size:14px;padding-top:10px;border-top:2px solid var(--line-strong)}
 table.outlook tr.zhead small{font-weight:500;color:var(--focus);margin-left:6px}
@@ -524,6 +525,8 @@ function worstOf(list) {
 const zoneWorst = z => worstOf(BY_ZONE[z]);
 const zoneLabel = z => CFG.zoneNames[z] || z;
 const ZONES = () => Object.keys(BY_ZONE).sort();
+// Overview order by state
+const STATE_GROUPS = [["Arizona", ["FDZ", "PIFC", "SEZ", "WAZ", "WDZ", "WMZ"]], ["New Mexico", ["ABZ", "GLZ", "PEZ", "SFZ", "TDZ"]]];
 
 function renderTabs() {
   const all = worstOf(META.fdras);
@@ -543,7 +546,7 @@ function openZoneMenu(z, btn) {
   if (m.dataset.zone === z && m.classList.contains("show")) return closeZoneMenu();
   const w = zoneWorst(z);
   m.innerHTML = `<button role="menuitem" class="mi whole${state.zone === z && !state.fdra ? " cur" : ""}" data-zone="${esc(z)}">
-      <span class="sw" style="background:${w ? w.color : "transparent"}"></span><span><b>Whole ${esc(zoneLabel(z))} zone</b><small>Zone summary of ${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"}</small></span></button>
+      <span class="sw" style="background:${w ? w.color : "transparent"}"></span><span><b>Whole ${esc(zoneLabel(z))}</b><small>Zone summary of ${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"}</small></span></button>
     <div class="msep">FDRAs in ${esc(zoneLabel(z))}</div>` +
     BY_ZONE[z].map(f => {
       const d = currentDanger(f);
@@ -568,7 +571,7 @@ function closeZoneMenu() {
 
 function renderCrumbs() {
   let h = `<span class="lbl">Viewing</span><button class="crumb${!state.zone ? " cur" : ""}" data-overview="1">Southwest</button>`;
-  if (state.zone) h += `<span class="sep">›</span><button class="crumb${!state.fdra ? " cur" : ""}" data-zone="${esc(state.zone)}">${esc(zoneLabel(state.zone))} zone</button>`;
+  if (state.zone) h += `<span class="sep">›</span><button class="crumb${!state.fdra ? " cur" : ""}" data-zone="${esc(state.zone)}">${esc(zoneLabel(state.zone))}</button>`;
   if (state.fdra) h += `<span class="sep">›</span><span class="crumb cur">${esc(FDRA[state.fdra].name)} FDRA</span>`;
   if (state.zone) h += `<button class="btn details" data-details="1">${state.fdra ? "FDRA details" : "Zone details"}</button>`;
   // quick switch chips
@@ -702,17 +705,22 @@ function outlookTable(list, {groupByZone = false, zoneRow = null} = {}) {
     const d = currentDanger(f);
     const off = ratings[f.key] && classByName(ratings[f.key].rating);
     return `<tr class="${isZone ? "zrow" : "frow"}" ${isZone ? `data-zone="${esc(f.zone)}"` : `data-fdra="${esc(f.key)}"`} tabindex="0">
-      <th>${isZone ? `<b>${esc(zoneLabel(f.zone))} zone</b> <small>(highest FDRA)</small>` : esc(f.name)}</th>
+      <th>${isZone ? `<b>${esc(zoneLabel(f.zone))}</b> <small>(highest FDRA)</small>` : esc(f.name)}</th>
       ${f.report.map(r => cell(r.values)).join("")}
       <td class="oc off" style="background:${!isZone && off ? off.color : "transparent"}">${isZone ? "" : off ? `<b>${esc(off.name)}</b>` : `<span class="muted">Not set</span>`}</td></tr>`;
   };
   let body = "";
   if (zoneRow) body += row({...zoneRow, zone: zoneRow.zone}, true);
   if (groupByZone) {
-    ZONES().forEach(z => {
+    const listed = new Set(STATE_GROUPS.flatMap(g => g[1]));
+    const groups = [...STATE_GROUPS, ["Other", ZONES().filter(z => !listed.has(z))]];
+    groups.forEach(([state, zones]) => { zones = zones.filter(z => BY_ZONE[z]); if (!zones.length) return;
+    body += `<tr class="shead"><th colspan="${periods.length + 2}">${esc(state)}</th></tr>`;
+    zones.forEach(z => {
       const w = zoneWorst(z);
-      body += `<tr class="zhead" data-zone="${esc(z)}" tabindex="0"><th colspan="${periods.length + 2}"><span class="sw" style="background:${w ? w.color : "transparent"}"></span>${esc(zoneLabel(z))} zone <small>${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"} · View zone ›</small></th></tr>`;
+      body += `<tr class="zhead" data-zone="${esc(z)}" tabindex="0"><th colspan="${periods.length + 2}"><span class="sw" style="background:${w ? w.color : "transparent"}"></span>${esc(zoneLabel(z))} <small>${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"} · View zone ›</small></th></tr>`;
       body += BY_ZONE[z].map(f => row(f, false)).join("");
+    });
     });
   } else body += list.map(f => row(f, false)).join("");
   return `<div class="tbl-scroll"><table class="outlook"><thead><tr><th>FDRA</th>${head}<th>Official rating</th></tr></thead><tbody>${body}</tbody></table></div>
@@ -738,7 +746,7 @@ function renderView() {
     const today = zr?.report.find(r => r.label === "Today")?.values;
     const c = fdOf(today).cls;
     const note = without ? ` · ${without} without data yet` : "";
-    el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(zoneLabel(z))} zone</h2>
+    el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(zoneLabel(z))}</h2>
         <div class="rating-box"><span style="color:var(--ink-3)">Zone today (highest FDRA)</span><span class="badge" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "No data"}</span></div>
         <div class="pmeta">${withData.length ? `Summary of ${withData.length} FDRA${withData.length === 1 ? "" : "s"} (${withData.map(f => esc(f.name)).join(", ")})${note} · ${ids.length} stations` : `${BY_ZONE[z].length} FDRAs · no station data yet`}</div></div>
         ${zr ? legendHtml() + reportTable(zr) + `<div class="footnote">Zone values are averages of FDRAs with available data; percentiles are calculated against each FDRA's own history. Zone fire danger reflects the highest-rated FDRA.</div>`
@@ -991,7 +999,7 @@ function openZonePanel(z) {
   panelCtx = {type: "zone", key: z};
   const ids = [...new Set(list.flatMap(f => f.sig_raws))];
   const w = zoneWorst(z);
-  $("#dTitle").textContent = zoneLabel(z) + " Zone";
+  $("#dTitle").textContent = zoneLabel(z);
   $("#dSub").textContent = `${list.length} FDRA${list.length === 1 ? "" : "s"} · ${ids.length} station${ids.length === 1 ? "" : "s"}`;
   const body = () => {
     const withData = list.filter(f => !f.noData);
@@ -1061,7 +1069,7 @@ async function openStation(id) {
         return `<button class="stn${cur ? " cur" : ""}" ${cur ? "aria-current=\"true\"" : `data-station="${esc(sid)}"`}><b>${esc(sid)}</b>${st ? esc(titleCase(st.name)) : ""}</button>`; }).join("")}</div></div>`;
   }).join("");
   const wx = s.wx;
-  const back = panelCtx ? `<button class="lnk back" data-back="1">← Back to ${esc(panelCtx.type === "fdra" ? FDRA[panelCtx.key].name + " FDRA" : zoneLabel(panelCtx.key) + " Zone")}</button>` : "";
+  const back = panelCtx ? `<button class="lnk back" data-back="1">← Back to ${esc(panelCtx.type === "fdra" ? FDRA[panelCtx.key].name + " FDRA" : zoneLabel(panelCtx.key))}</button>` : "";
   $("#dBody").innerHTML = `${back}<dl class="kv"><dt>Latitude</dt><dd>${s.lat}</dd><dt>Longitude</dt><dd>${s.lon}</dd><dt>FDRAs</dt><dd>${fdraLinks}</dd></dl>
     ${fdraStations ? `<h4>FDRA Stations</h4>${fdraStations}` : ""}
     ${wx ? `<h4>Latest weather · ${esc(fmtMst(wx.h))} LST</h4><dl class="kv">
