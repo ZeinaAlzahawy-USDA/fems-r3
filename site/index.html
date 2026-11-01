@@ -26,6 +26,7 @@ window.APP_CONFIG = {
   //  Either an ArcGIS layer (…/FeatureServer/0, shared with Everyone) or a GeoJSON file in the site folder (e.g. "fdra.geojson").
   //  Default: a file named fdra.geojson placed in the site folder. If it is not there, the map just shows stations.
   fdraLayerUrl: "fdra.geojson",
+  zonesUrl: "zones.geojson",          // SWCC dispatch zone boundaries (from the National Dispatch Boundaries layer)
   //  "auto" finds the FDRA name field (FDRA_ZONE, or Zone + FDRA). Or list fields, e.g. ["Zone", "FDRA"].
   fdraKeyFields: "auto",
   // State outlines are built into this page (no login needed). States drawn bold:
@@ -465,6 +466,7 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.ad
 // Every FDRA in the boundary file is listed, even before its station data exists in GitHub.
 async function addFdrasWithoutData() {
   if (!/\.(geo)?json(\?|$)/i.test(CFG.fdraLayerUrl || "")) return;
+  if (META.fdra_list_complete) return;          // only the FDRAs in the official FDRA list are shown
   try {
     const gj = await (await fetch(CFG.fdraLayerUrl, {cache: "no-cache"})).json();
     const have = new Set(META.fdras.map(f => f.key));
@@ -792,7 +794,8 @@ const selectFdra = (key, o) => FDRA[key] && go(FDRA[key].zone, key, o);
 function renderLegend() {
   $("#mapLegend").innerHTML = `<div class="row">${CLASSES.map(c => `<span class="it"><span class="sw" style="background:${c.color}"></span>${esc(c.name)}</span>`).join("")}
     <span class="it"><span class="sw" style="background:#b8b4ab"></span>Not an FDRA station</span>
-    <span class="it"><span class="sw" style="background:transparent;border:1px dashed #6e6a62;border-radius:2px"></span>FDRA without data yet</span></div>`;
+    <span class="it"><span class="sw" style="background:transparent;border:1px dashed #6e6a62;border-radius:2px"></span>FDRA without data yet</span>
+    <span class="it"><span class="sw" style="background:transparent;border:3px solid #1e3a8a;border-radius:2px"></span>Zone boundary</span></div>`;
 }
 
 /* ---------------- season charts (ERC / BI) ---------------- */
@@ -1239,6 +1242,37 @@ function startMap() {
         ? new GeoJSONLayer({url: CFG.fdraLayerUrl}) : new FeatureLayer({url: CFG.fdraLayerUrl});
       map.add(fdraPolys);
     }
+    // zone boundaries: thick navy outline + zone name, drawn above the FDRAs; the selected zone in orange, on top
+    // (one color for all zones because neighboring zones share their borders)
+    const ZONE_LINE = "#1e3a8a", ZONE_SEL = "#ea580c";
+    const zoneLayer = new GraphicsLayer();
+    let zoneShapes = null;
+    if (CFG.zonesUrl) map.add(zoneLayer);
+    async function loadZoneShapes() {
+      if (zoneShapes || !CFG.zonesUrl) return zoneShapes;
+      try {
+        const src = new GeoJSONLayer({url: CFG.zonesUrl});
+        const res = await src.queryFeatures({where: "1=1", outFields: ["*"], returnGeometry: true, outSpatialReference: view.spatialReference});
+        zoneShapes = res.features.map(ft => ({zone: ft.attributes.ZONE, geometry: ft.geometry, lon: ft.attributes.lab_lon, lat: ft.attributes.lab_lat}));
+      } catch (e) { console.warn("Zone boundaries:", e.message); zoneShapes = []; }
+      return zoneShapes;
+    }
+    async function drawZones() {
+      const zs = await loadZoneShapes();
+      if (!zs) return;
+      zoneLayer.removeAll();
+      const cur = state.zone, gs = [];
+      [...zs].sort((a, b) => (a.zone === cur) - (b.zone === cur)).forEach(z => {
+        const sel = z.zone === cur, rgb = hex2rgb(sel ? ZONE_SEL : ZONE_LINE);
+        const alpha = !cur || sel ? 1 : 0.55, width = !cur ? 3 : sel ? (state.fdra ? 3.5 : 4.5) : 2;
+        gs.push(new Graphic({geometry: z.geometry, attributes: {zone: z.zone},
+          symbol: {type: "simple-fill", color: [0, 0, 0, 0], outline: {color: [...rgb, alpha], width}}}));
+        if (z.lon != null) gs.push(new Graphic({geometry: {type: "point", longitude: z.lon, latitude: z.lat}, attributes: {zone: z.zone},
+          symbol: {type: "text", text: z.zone, color: [...rgb, !cur || sel ? 1 : 0.6], haloColor: [255, 255, 255, 0.95], haloSize: 2,
+            font: {size: sel ? 15 : 12, weight: "bold", family: "sans-serif"}}}));
+      });
+      zoneLayer.addMany(gs);
+    }
     const stLayer = new GraphicsLayer();
     map.add(stLayer);
     let selSt = null;
@@ -1288,7 +1322,7 @@ function startMap() {
       if (!shapes) return;
       fdraPolys.removeAll();
       const mode = state.fdra ? "fdra" : state.zone ? "zone" : "all";
-      const items = shapes.map(x => {
+      const items = shapes.filter(x => FDRA[x.key] || !META.fdra_list_complete).map(x => {
         const f = FDRA[x.key];
         if (!f || f.noData) return {rank: f && (mode === "zone" ? f.zone === state.zone : x.key === state.fdra) ? 2.5 : -1,
           g: new Graphic({geometry: x.geometry, attributes: {key: f ? x.key : null},   // FDRA with no station data yet
@@ -1351,7 +1385,7 @@ function startMap() {
     });
 
     mapApi = {
-      refresh() { drawStations(); drawFdraPolys(); },
+      refresh() { drawStations(); drawFdraPolys(); drawZones(); },
       zoomToView() {
         if (state.fdra) return zoomKeys([state.fdra]);
         if (state.zone) return zoomKeys(BY_ZONE[state.zone].map(f => f.key));
