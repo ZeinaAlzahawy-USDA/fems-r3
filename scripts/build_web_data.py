@@ -467,6 +467,7 @@ def main():
         "breakpoint_indices": BREAKPOINT_INDICES + ([*EXTRA_INDICES] if extra is not None else []), "inverted_pct": INVERT_PCT,
         "stations": stations,
         "fdras": fdra_list,
+        "fdra_list_complete": True,   # r3_fdra.csv is the official FDRA list; the site shows only these FDRAs
     })
     print(f"Wrote {len(stations)} stations and {len(fdra_list)} FDRAs to {OUT_DIR} "
           f"(obs through {latest_obs_date}, forecast pull {latest_pull})")
