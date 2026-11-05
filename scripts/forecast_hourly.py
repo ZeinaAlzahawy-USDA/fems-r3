@@ -1,5 +1,6 @@
 import os
 import math
+import time
 import pandas as pd
 import requests
 from datetime import datetime, timedelta, timezone
@@ -134,24 +135,53 @@ query NfdrsObs(
 """
 
 # ========= REQUEST HELPER =========
+RETRY_TRIES = 4                          # total attempts per request
+RETRY_WAIT_SECONDS = 30                  # wait 30s, 60s, 90s between attempts
+RETRY_STATUS = {429, 500, 502, 503, 504}  # FEMS busy / gateway timeout
+STATION_BATCH = 50                       # stations per request (smaller requests = faster FEMS answers)
+
 def gql(query, variables=None):
-    r = requests.post(
-        ENDPOINT,
-        headers=HEADERS,
-        auth=AUTH,
-        json={"query": query, "variables": variables},
-        timeout=300
-    )
-    print(f"[HTTP {r.status_code}] {ENDPOINT}")
+    # FEMS sometimes answers a large request with "504 Gateway Time-out".
+    # Instead of failing the whole run, wait and ask again (same request, same data).
+    for attempt in range(1, RETRY_TRIES + 1):
+        try:
+            r = requests.post(
+                ENDPOINT,
+                headers=HEADERS,
+                auth=AUTH,
+                json={"query": query, "variables": variables},
+                timeout=300
+            )
+            print(f"[HTTP {r.status_code}] {ENDPOINT}")
+            ct = r.headers.get("content-type", "")
+            busy = r.status_code in RETRY_STATUS or "application/json" not in ct
+            if busy:
+                problem = f"HTTP {r.status_code}: {r.text[:120]!r}"
+        except (requests.Timeout, requests.ConnectionError) as e:
+            busy, problem = True, f"{type(e).__name__}: {e}"
 
-    ct = r.headers.get("content-type", "")
-    j = r.json() if "application/json" in ct else {"errors": [{"message": r.text[:300]}]}
+        if busy:
+            if attempt == RETRY_TRIES:
+                raise RuntimeError(f"FEMS did not answer after {RETRY_TRIES} attempts. Last problem: {problem}")
+            wait = RETRY_WAIT_SECONDS * attempt
+            print(f"  FEMS busy ({problem}). Attempt {attempt} of {RETRY_TRIES} - trying again in {wait}s")
+            time.sleep(wait)
+            continue
 
-    if j.get("errors"):
-        raise RuntimeError(j["errors"])
-    r.raise_for_status()
+        j = r.json()
+        if j.get("errors"):
+            raise RuntimeError(j["errors"])
+        r.raise_for_status()
+        return j["data"]
 
-    return j["data"]
+def gql_by_stations(query, variables, field):
+    """Same request, split into groups of stations; the rows are combined (each station is in one group only)."""
+    rows = []
+    for i in range(0, len(station_ids), STATION_BATCH):
+        part = ",".join(station_ids[i:i + STATION_BATCH])
+        data = gql(query, {**variables, "stationIds": part})[field]["data"] or []
+        rows.extend(data)
+    return rows
 
 # ========= DIAGNOSTICS =========
 def report(label, df, type_col):
@@ -190,14 +220,15 @@ def calc_vpd_pa(temp_f, rh_pct):
     return math.floor(vpd_kpa * 1000)
 
 # ========= PULL: WEATHER (next 7 days) =========
-wx = gql(
+wx = gql_by_stations(
     Q_WEATHER_OBS,
     {
         "startDateTimeRange": start_dt_iso,
         "endDateTimeRange": end_dt_iso,
         "stationIds": station_ids_csv
-    }
-)["weatherObs"]["data"]
+    },
+    "weatherObs"
+)
 df_wx = pd.DataFrame(wx)
 report("weather pull (raw)", df_wx, "observation_type")
 
@@ -218,7 +249,7 @@ report("weather pull (forecast only)", df_wx, "observation_type")
 # ========= PULL: NFDR (next 7 days, per fuel model) =========
 nfdr_frames = []
 for fm in FUEL_MODELS:
-    nf = gql(
+    nf = gql_by_stations(
         Q_NFDRS_OBS,
         {
             "fuelModels": fm,
@@ -226,8 +257,9 @@ for fm in FUEL_MODELS:
             "startDateRange": start_date,
             "endDateRange": end_date,
             "dateTimeFormat": "UTC"
-        }
-    )["nfdrsObs"]["data"]
+        },
+        "nfdrsObs"
+    )
     print(f"fuel model {fm}: {len(nf)} rows")
     nfdr_frames.append(pd.DataFrame(nf))
 
