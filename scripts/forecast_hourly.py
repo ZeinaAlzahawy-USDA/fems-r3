@@ -195,7 +195,9 @@ def report(label, df, type_col):
 # into two clean columns: a date (month/day/year) and a time (MST, HH:MM:SS)
 def split_lst_column(df, lst_col, date_col, mst_col):
     if lst_col in df.columns:
-        dt = pd.to_datetime(df[lst_col], errors="coerce")
+        # Use each station's own local clock time (the part before the offset, e.g. "2026-09-05T13:32:00").
+        # Stations outside AZ/NM report other offsets (-06:00, -08:00), and mixed offsets cannot be read together.
+        dt = pd.to_datetime(df[lst_col].astype(str).str.slice(0, 19), errors="coerce", format="%Y-%m-%dT%H:%M:%S")
         df[date_col] = dt.dt.strftime("%-m/%-d/%Y")
         df[mst_col] = dt.dt.strftime("%H:%M:%S")
         df = df.drop(columns=[lst_col])
