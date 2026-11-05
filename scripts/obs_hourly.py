@@ -123,7 +123,7 @@ query NfdrsObs(
 """
 
 # ========= REQUEST HELPER =========
-RETRY_TRIES = 4                          # total attempts per request
+RETRY_TRIES = 5                          # total attempts per request
 RETRY_WAIT_SECONDS = 30                  # wait 30s, 60s, 90s between attempts
 RETRY_STATUS = {429, 500, 502, 503, 504}  # FEMS busy / gateway timeout
 
@@ -227,15 +227,17 @@ def date_chunks(first, last, size):
             break
         d0 = d_end
 
+STATION_BATCH = 75                       # stations per request (smaller requests = faster FEMS answers)
 nfdr_frames = []
 for fm in FUEL_MODELS:
     fm_rows = 0
     for chunk_start, chunk_end in date_chunks(start_date, end_date, NFDR_CHUNK_DAYS):
+      for b in range(0, len(station_ids), STATION_BATCH):
         nf = gql(
             Q_NFDRS_OBS,
             {
                 "fuelModels": fm,
-                "stationIds": station_ids_csv,
+                "stationIds": ",".join(station_ids[b:b + STATION_BATCH]),
                 "startDateRange": chunk_start,
                 "endDateRange": chunk_end,
                 "dateTimeFormat": "UTC"
