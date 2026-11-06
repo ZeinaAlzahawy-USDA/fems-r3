@@ -222,8 +222,12 @@ def compute_daily_vpd_from_hourly(hourly_path):
         return empty
 
     df_h = pd.read_csv(hourly_path, dtype=str)
+    # The hourly file keeps the raw local time (e.g. 2026-11-05T13:00:00.000-07:00); its first
+    # 10 characters are the station's local date. Older files had a separate observation_date_lst column.
+    if "observation_date_lst" not in df_h.columns and "observation_time_lst" in df_h.columns:
+        df_h["observation_date_lst"] = df_h["observation_time_lst"].astype(str).str.slice(0, 10)
     if df_h.empty or "vpd" not in df_h.columns or "observation_date_lst" not in df_h.columns:
-        print("Hourly weather file missing vpd or observation_date_lst — Max/Min VPD will be blank this run")
+        print("Hourly weather file missing vpd or observation date — Max/Min VPD will be blank this run")
         return empty
 
     df_h["vpd"] = pd.to_numeric(df_h["vpd"], errors="coerce")
