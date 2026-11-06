@@ -18,8 +18,10 @@ concurrency:
 jobs:
   obs-daily:
     runs-on: ubuntu-latest
+    timeout-minutes: 45         # a stuck run stops by itself; the next run catches up
     env:
       GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"     # show the script's messages in the log as they happen
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,6 +51,9 @@ jobs:
       - name: Upload history to release
         run: |
           gh release upload obs-history data/history_daily_weatherminmax.csv data/history_daily_nfdrminmax.csv --clobber
+
+      - name: Get the latest FDRA percentile history
+        run: gh release download fdra-climo -p r3_fdra_percentile_historical.csv -D data --clobber || echo "Using the percentile history in the repository"
 
       - name: Build observed daily FDRA NFDR (saved to GitHub only; no ArcGIS upload)
         run: python scripts/obs_nfdr_daily_fdra.py

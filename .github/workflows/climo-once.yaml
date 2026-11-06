@@ -24,9 +24,10 @@ concurrency:
 jobs:
   climo:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"     # show the script's messages in the log as they happen
       FEMS_USERNAME: ${{ secrets.FEMS_USERNAME }}
       FEMS_API_KEY: ${{ secrets.FEMS_API_KEY }}
       CLIMO_START_YEAR: ${{ inputs.start_year }}
@@ -49,7 +50,7 @@ jobs:
       - name: Save to a release (fdra-climo)
         run: |
           gh release view fdra-climo >/dev/null 2>&1 || gh release create fdra-climo --title "FDRA history ${CLIMO_START_YEAR}-${CLIMO_END_YEAR}" --notes "Daily average and max ERC/BI per FDRA for the website charts."
-          gh release upload fdra-climo data/r3_fdra_daily_climo.csv data/r3_fdra_percentile_extra.csv data/history_${CLIMO_START_YEAR}_${CLIMO_END_YEAR}_daily_erc_bi.csv --clobber
+          gh release upload fdra-climo data/r3_fdra_daily_climo.csv data/r3_fdra_percentile_extra.csv data/history_${CLIMO_START_YEAR}_${CLIMO_END_YEAR}_daily_erc_bi.csv data/r3_fdra_percentile_historical.csv --clobber
 
       - name: Rebuild the website
         run: gh workflow run website.yaml
