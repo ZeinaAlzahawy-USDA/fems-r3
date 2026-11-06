@@ -216,6 +216,13 @@ def main():
     nfdr = nfdr[nfdr["nfdr_type"] == "O"]
     nfdr = nfdr.sort_values("pull_date" if "pull_date" in nfdr else "summary_date")
     nfdr = nfdr.drop_duplicates(["sid", "summary_date", "fuel_model"], keep="last")
+    # "Yesterday" = the latest day that most stations have reported. FEMS finishes a day's NFDR
+    # values a few hours after midnight, so a run just after midnight can see only a handful
+    # of stations for that day; those partial days are left out until most stations report.
+    per_day = nfdr.groupby("summary_date")["sid"].nunique()
+    complete_days = per_day[per_day >= 0.8 * per_day.max()].index
+    if len(complete_days):
+        nfdr = nfdr[nfdr["summary_date"] <= complete_days.max()]
     latest_obs_date = nfdr["summary_date"].max()
 
     fc = pd.read_csv(P("history_forecast_daily_nfdr.csv"), dtype={"station_id": str})
