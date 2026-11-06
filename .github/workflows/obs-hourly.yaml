@@ -16,8 +16,10 @@ concurrency:
 jobs:
   obs-hourly:
     runs-on: ubuntu-latest
+    timeout-minutes: 30         # a stuck run stops by itself; the next hourly run catches up
     env:
       GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"     # show the script's messages in the log as they happen
     steps:
       - name: Checkout
         uses: actions/checkout@v4
