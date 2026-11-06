@@ -12,7 +12,7 @@ ENDPOINT    = "https://fems.fs2c.usda.gov/api/ext-climatology/graphql"  # PROD
 FUEL_MODELS = ["V", "W", "X", "Y", "Z"]
 DATA_DIR    = "data"
 
-RECHECK_DAYS   = 30    # re-sync window on every run
+RECHECK_DAYS   = 7     # re-sync window on every run (older history is kept as is)
 RETENTION_DAYS = 365   # keep 1 year of history
 
 # NFDR fire-danger columns: round to match FEMS's own display (1 decimal, GSI keeps 2)
@@ -191,14 +191,19 @@ def calc_vpd_pa(temp_f, rh_pct):
     return math.floor(vpd_kpa * 1000)
 
 # ========= PULL: WEATHER (30-day window) =========
-wx = gql(
-    Q_WEATHER_OBS,
-    {
-        "startDateTimeRange": start_dt_iso,
-        "endDateTimeRange": end_dt_iso,
-        "stationIds": station_ids_csv
-    }
-)["weatherObs"]["data"]
+# Weather is requested in groups of stations so each FEMS request stays small
+wx = []
+for b in range(0, len(station_ids), 75):
+    part = gql(
+        Q_WEATHER_OBS,
+        {
+            "startDateTimeRange": start_dt_iso,
+            "endDateTimeRange": end_dt_iso,
+            "stationIds": ",".join(station_ids[b:b + 75])
+        }
+    )["weatherObs"]["data"]
+    print(f"weather, stations {b + 1}-{min(b + 75, len(station_ids))}: {len(part or [])} rows")
+    wx.extend(part or [])
 df_wx = pd.DataFrame(wx)
 report("weather pull (raw)", df_wx, "observation_type")
 
