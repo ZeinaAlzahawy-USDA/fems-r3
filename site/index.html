@@ -1298,7 +1298,7 @@ function startMap() {
         const sel = z.zone === cur, rgb = hex2rgb(sel ? ZONE_SEL : ZONE_LINE);
         const alpha = !cur || sel ? 1 : 0.55, width = !cur ? 3 : sel ? (state.fdra ? 3.5 : 4.5) : 2;
         gs.push(new Graphic({geometry: z.geometry, attributes: {zone: z.zone},
-          symbol: {type: "simple-fill", color: [0, 0, 0, 0], outline: {color: [...rgb, alpha], width}}}));
+          symbol: {type: "simple-fill", color: [0, 0, 0, 0], outline: {color: [...rgb, alpha], width, join: "round", cap: "round"}}}));
         if (z.lon != null) gs.push(new Graphic({geometry: {type: "point", longitude: z.lon, latitude: z.lat}, attributes: {zone: z.zone},
           symbol: {type: "text", text: z.zone, color: [...rgb, !cur || sel ? 1 : 0.6], haloColor: [255, 255, 255, 0.95], haloSize: 2,
             font: {size: sel ? 15 : 12, weight: "bold", family: "sans-serif"}}}));
@@ -1409,7 +1409,9 @@ function startMap() {
       const st = hit.results.find(r => r.graphic?.layer === stLayer);
       if (st) { openStation(st.graphic.attributes.id); return; }
       const poly = hit.results.find(r => r.graphic?.layer === fdraPolys);
-      if (poly && poly.graphic.attributes.key) selectFdra(poly.graphic.attributes.key, {zoom: false});
+      if (poly && poly.graphic.attributes.key) { selectFdra(poly.graphic.attributes.key); return; }   // zooms to the FDRA
+      const zn = hit.results.find(r => r.graphic?.layer === zoneLayer && r.graphic.attributes?.zone);
+      if (zn && BY_ZONE[zn.graphic.attributes.zone]) selectZone(zn.graphic.attributes.zone);       // clicked inside a zone, outside its FDRAs
     });
     view.on("pointer-move", async evt => {
       const hit = await view.hitTest(evt, {include: [stLayer, fdraPolys]});
