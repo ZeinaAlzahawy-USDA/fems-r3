@@ -97,6 +97,22 @@ INVERT_PCT = ["fm100", "fm1000", "gsi"]
 EXTRA_PCT_FILE = "r3_fdra_percentile_extra.csv"
 EXTRA_INDICES = {"sfdi": "SFDI", "vpd": "VPD", "hdwi": "HDWI"}
 
+# FDRAs that use their own rating method from the fire planner's "Zone Fire Danger Parameters & Thresholds"
+# sheet (AdjectiveRating tab). Each number is the top of its class; the last class is anything above the
+# fourth number. "grid": rows = BI class, columns = ERC class (0=Low 1=Moderate 2=High 3=Very High 4=Extreme).
+# The fuel model is the FDRA's own (FM_Long in r3_fdra.csv). FDRAs not listed keep the VPD x SFDI method.
+PLANNER_METHODS = {
+    "ABZ Mt Taylor & Zuni": {
+        "erc": [41, 51, 59, 62],
+        "bi": [27, 34, 39, 42],
+        "grid": [[0, 0, 0, 1, 1],
+                 [0, 1, 1, 1, 2],
+                 [1, 1, 2, 2, 3],
+                 [1, 2, 3, 3, 4],
+                 [2, 3, 3, 4, 4]],
+    },
+}
+
 # Daily report columns: (key, label, group, has_percentile)
 REPORT_COLS = [
     ("erc", "ERC", "Fuels", True), ("bi", "BI", "Fuels", True),
@@ -191,6 +207,16 @@ def fire_danger_class(res):
             return FD_MATRIX[cv][cs], "matrix"
     c = class_of_pct(res.get(FIRE_DANGER_INDEX + "_pct"))
     return c, (FIRE_DANGER_INDEX if c is not None else None)
+
+
+def planner_class(value, limits):
+    """Class 0-4 for a value against the planner's four numbers (each number is the top of its class)."""
+    if value is None or pd.isna(value):
+        return None
+    for i, top in enumerate(limits):
+        if float(value) <= top:
+            return i
+    return len(limits)
 
 
 def percentile_for(value, thresholds):
@@ -300,6 +326,10 @@ def main():
                 e = extra[extra["FDRA_ZONE"].str.strip() == key]
                 thresholds[k] = sorted(zip(e[col].astype(float), e["Percentiles"].astype(int)))
 
+        pm = PLANNER_METHODS.get(key)
+        # the planner's numbers as percentile steps of this FDRA's history (highest step at or below each number)
+        pm_tops = {k: [percentile_for(t, thresholds[k]) for t in pm[k]] for k in ("erc", "bi")} if pm else None
+
         # FDRA daily averages from station data (season + forecast)
         def daily_avg(df, kind):
             sub = df[(df["sid"].isin(sig)) & (df["fuel_model"] == fm)]
@@ -343,7 +373,7 @@ def main():
             s_w = wx[(wx["sid"].isin(sig)) & (wx["summary_date"].isin(days))]
             if s_n.empty and s_w.empty:
                 return None
-            src = {"erc": "Max ERC", "bi": "Max BI", "fm100": "Min 100 hr FM",
+            src = {"erc": "Max ERC", "bi": "Max BI", "ic": "Max IC", "sc": "Max SC", "fm100": "Min 100 hr FM",
                    "fm1000": "Min 1000 hr FM", "kbdi": "KBDI", "gsi": "GSI"}
             wsrc = {"tmax": "Max Temp F", "tmin": "Min Temp F", "wind": "Max Wind mph",
                     "gust": "Max Wind Gust mph", "rhmin": "Min RH pct", "precip": "Precip Total in"}
@@ -363,11 +393,22 @@ def main():
             out["hdwi"] = hdwi_of(out["vpd"], out["wind"])
             res = {}
             for k, v in out.items():
-                res[k] = rnd(v, 2 if k in ("gsi", "precip") else 0)
+                res[k] = rnd(v, 2 if k in ("gsi", "precip") else 1 if k == "sc" else 0)
                 if k in thresholds:
                     pct = percentile_for(v, thresholds[k]) if (v is not None and pd.notna(v)) else None
                     res[k + "_pct"] = (100 - pct) if (pct is not None and k in INVERT_PCT) else pct
             res["fd"], res["fd_method"] = fire_danger_class(res)
+            if pm:
+                # Planner method: ERC class and BI class (from the values) meet in the planner's matrix
+                for k in ("erc", "bi"):
+                    vc = planner_class(out.get(k), pm[k])
+                    res[k + "_cls"] = vc
+                    p = res.get(k + "_pct")
+                    # Percentile color: the planner's numbers expressed as percentiles of this FDRA's history.
+                    # A percentile step that holds values on both sides of a planner number uses the value's class.
+                    res[k + "_pcls"] = None if p is None or None in pm_tops[k] else vc if p in pm_tops[k] else sum(p > t for t in pm_tops[k])
+                ec, bc = res["erc_cls"], res["bi_cls"]
+                res["fd"], res["fd_method"] = (pm["grid"][bc][ec], "planner") if ec is not None and bc is not None else (None, None)
             return res
 
         obs_days = sorted(nfdr["summary_date"].unique())
@@ -383,6 +424,24 @@ def main():
             report.append({"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                            "values": day_values(nf, wx, days) if days else None})
 
+        detail_report, planner = None, None
+        if pm:
+            # FDRA page table: Yesterday, Today, Tomorrow, the next two days by name, 7-day averages
+            name_of = lambda d: datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+            rows = [("Yesterday", nfdr, wxd, obs_days[-1:]),
+                    ("Today", fc, fwx, [today] if today else []),
+                    ("Tomorrow", fc, fwx, future[:1])]
+            rows += [(name_of(d), fc, fwx, [d]) for d in future[1:3]]
+            rows += [("7-Day Observed", nfdr, wxd, obs_days[-7:]),                              # last 7 observed days
+                     ("7-Day Forecast", fc, fwx, ([today] if today else []) + future[:6])]      # today + next 6 days
+            detail_report = [{"label": label, "days": days, "type": "O" if nf is nfdr else "F",
+                              "values": day_values(nf, wx, days) if days else None} for label, nf, wx, days in rows]
+            ranges = lambda tops: [[1 if i == 0 else tops[i - 1] + 1, tops[i] if i < len(tops) else 100] for i in range(len(tops) + 1)]
+            if any(None in pm_tops[k] for k in ("erc", "bi")):
+                print(f"WARNING: {key} has no percentile history; percentile colors left blank")
+            planner = {"label": f"ERC-{fm} × BI-{fm}", "erc": pm["erc"], "bi": pm["bi"], "grid": pm["grid"],
+                       "pct_ranges": {k: ranges(pm_tops[k]) if None not in pm_tops[k] else None for k in ("erc", "bi")}}
+
         breakpoints = []
         for c in CLASSES:
             row = {"class": c["name"], "range": f'{c["min"]}-{c["max"]}%'}
@@ -394,6 +453,7 @@ def main():
 
         item = {
             "report": report, "breakpoints": breakpoints,
+            **({"detail_report": detail_report, "planner": planner} if pm else {}),
             "key": key, "slug": slug(key), "name": r["FDRA"].strip(), "zone": r["Zone"].strip(),
             "fdra_id": r["FDRA_ID"], "fuel_model": fm, "sig_raws": sig,
             "mfd": r.get("MFD_Thresh"), "lfd": r.get("LFD_Threshold"),
