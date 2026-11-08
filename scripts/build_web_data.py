@@ -106,6 +106,11 @@ ABZ_GRID = [[0, 0, 0, 1, 1],   # same matrix for these ABZ FDRAs
             [1, 1, 2, 2, 3],
             [1, 2, 3, 3, 4],
             [2, 3, 3, 4, 4]]
+PEZ_MTN_GRID = [[0, 0, 0, 1, 2],   # PEZ Guadalupe and Sacramento Mountains
+                [0, 1, 1, 2, 2],
+                [1, 1, 1, 2, 2],
+                [1, 1, 2, 3, 3],
+                [1, 1, 2, 3, 4]]
 PLANNER_METHODS = {
     "ABZ Mt Taylor & Zuni": {
         "erc": [41, 51, 59, 62],
@@ -127,6 +132,16 @@ PLANNER_METHODS = {
         "erc": [39, 49, 59, 63],
         "bi": [28, 36, 45, 48],
         "grid": ABZ_GRID,
+    },
+    "PEZ Guadalupe Mountains": {
+        "erc": [39.9, 47.9, 54.9, 61.9],
+        "bi": [39.9, 47.9, 54.9, 61.9],
+        "grid": PEZ_MTN_GRID,
+    },
+    "PEZ Sacramento Mountains": {
+        "erc": [39.9, 47.9, 54.9, 61.9],
+        "bi": [39.9, 47.9, 54.9, 61.9],
+        "grid": PEZ_MTN_GRID,
     },
 }
 
@@ -460,7 +475,9 @@ def main():
                     v = day_values(nf, wx, [d]) or {}
                     daily.append({"d": d, "type": "O" if nf is nfdr else "F",
                                   **{k: v.get(k) for k in ("erc", "bi", "erc_cls", "bi_cls", "fd")}})
-            ranges = lambda tops: [[1 if i == 0 else tops[i - 1] + 1, tops[i] if i < len(tops) else 100] for i in range(len(tops) + 1)]
+            # percentile range of each class; None when no percentile step falls in that class
+            ranges = lambda tops: [(lambda lo, hi: [lo, hi] if lo <= hi else None)(1 if i == 0 else tops[i - 1] + 1, tops[i] if i < len(tops) else 100)
+                                   for i in range(len(tops) + 1)]
             if any(None in pm_tops[k] for k in ("erc", "bi")):
                 print(f"WARNING: {key} has no percentile history; percentile colors left blank")
             planner = {"label": f"ERC-{fm} × BI-{fm}", "erc": pm["erc"], "bi": pm["bi"], "grid": pm["grid"], "daily": daily,
