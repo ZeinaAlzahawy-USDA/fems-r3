@@ -472,7 +472,7 @@ function dayLabel(iso) {
 // Fire Danger for one report row: VPD x SFDI matrix (fd computed in build_web_data.py), else ERC percentile
 function fdOf(v) {
   if (!v) return {cls: null, pct: null, method: null};
-  if (v.fd != null) return {cls: CLASSES[v.fd], method: v.fd_method, pct: v.fd_method === "matrix" || v.fd_method === "planner" ? null : v[META.fire_danger_index + "_pct"]};
+  if (v.fd != null) return {cls: CLASSES[v.fd], method: v.fd_method, pct: v.fd_method === "matrix" || v.fd_method === "planner" || v.fd_method === "zone" ? null : v[META.fire_danger_index + "_pct"]};
   const p = v[META.fire_danger_index + "_pct"];
   return {cls: classForPct(p), pct: p, method: p != null ? META.fire_danger_index : null};
 }
@@ -552,7 +552,7 @@ function worstOf(list) {
   list.forEach(f => { const c = currentDanger(f).cls; if (c && (!worst || CLASSES.indexOf(c) > CLASSES.indexOf(worst))) worst = c; });
   return worst;
 }
-const zoneWorst = z => worstOf(BY_ZONE[z]);
+const zoneDanger = z => { const i = avgClass(BY_ZONE[z].map(f => CLASSES.indexOf(currentDanger(f).cls))); return i == null ? null : CLASSES[i]; };
 const zoneLabel = z => CFG.zoneNames[z] || z;
 const ZONES = () => Object.keys(BY_ZONE).sort();
 // Overview order by state
@@ -563,7 +563,7 @@ function renderTabs() {
   $("#zoneTabs").innerHTML = `<button class="ztab ov" role="tab" data-overview="1" aria-selected="${!state.zone}">
       <span class="dot" style="background:${all ? all.color : "transparent"}"></span>Southwest overview</button>` +
     ZONES().map(z => {
-      const w = zoneWorst(z), sel = z === state.zone;
+      const w = zoneDanger(z), sel = z === state.zone;
       const sub = sel ? (state.fdra ? FDRA[state.fdra].name : "Whole zone") : `${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"}`;
       return `<button class="ztab" role="tab" data-zonetab="${esc(z)}" aria-selected="${sel}" aria-haspopup="menu" aria-expanded="false">
         <span class="dot" style="background:${w ? w.color : "transparent"}" title="${w ? "Highest: " + esc(w.name) : ""}"></span>
@@ -574,7 +574,7 @@ function renderTabs() {
 function openZoneMenu(z, btn) {
   const m = $("#zoneMenu");
   if (m.dataset.zone === z && m.classList.contains("show")) return closeZoneMenu();
-  const w = zoneWorst(z);
+  const w = zoneDanger(z);
   m.innerHTML = `<button role="menuitem" class="mi whole${state.zone === z && !state.fdra ? " cur" : ""}" data-zone="${esc(z)}">
       <span class="sw" style="background:${w ? w.color : "transparent"}"></span><span><b>Whole ${esc(zoneLabel(z))}</b><small>Zone summary of ${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"}</small></span></button>
     <div class="msep">FDRAs in ${esc(zoneLabel(z))}</div>` +
@@ -618,17 +618,21 @@ function renderCrumbs() {
 function reportTable(f) {
   const P = f.planner, fm = f.fuel_model || "Y";
   let cols = META.report_cols;
+  if (f.zoneAvg) {   // zone table: same columns as the FDRA tables (IC and SC after BI)
+    const i = cols.findIndex(c => c.key === "bi") + 1;
+    cols = [...cols.slice(0, i), ...PLANNER_COLS, ...cols.slice(i)];
+  }
   if (P) {   // own method: ERC-<fm>, BI-<fm>, then IC and SC
     const i = cols.findIndex(c => c.key === "bi") + 1;
     cols = [...cols.slice(0, i), ...PLANNER_COLS, ...cols.slice(i)].map(c => c.key === "erc" || c.key === "bi" ? {...c, label: c.label + "-" + fm} : c);
   }
-  const rows = P && f.detail_report ? f.detail_report : f.report;
+  const rows = P && f.detail_report ? f.detail_report : f.report, NEW = !!(P || f.zoneAvg);
   const fuels = cols.filter(c => c.group === "Fuels"), wx = cols.filter(c => c.group === "Weather");
   const idx = META.fire_danger_index.toUpperCase();
   let h = `<div class="tbl-scroll"><table class="rep"><thead>
     <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
       <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
-      <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : fdMethodLabel())})</span>${avgTag(P)}</th></tr>
+      <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : f.zoneAvg ? "Zone average" : fdMethodLabel())})</span>${avgTag(P)}</th></tr>
     <tr>${fuels.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}${c.sub ? `<br><small class="avgt">${esc(c.sub)}</small>` : ""}</th>`).join("")}
         ${wx.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}</tr>
     </thead><tbody>`;
@@ -639,15 +643,15 @@ function reportTable(f) {
     const back = (iso, n) => { const t = new Date(iso + "T12:00:00"); t.setDate(t.getDate() - n); return t.toISOString().slice(0, 10); };
     // averaged methods: a single-day row is the average of the days ending on that day, so show that date range
     if (P && P.window > 1 && days.length === 1) days = [back(days[0], P.window - 1), days[0]];
-    const sub = P ? (days.length === 1 ? md(days[0]) : days.length ? md(days[0]) + " → " + md(days[days.length - 1]) : "No data")
+    const sub = NEW ? (days.length === 1 ? md(days[0]) : days.length ? md(days[0]) + " → " + md(days[days.length - 1]) : "No data")
       : days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
     const fdv = fdOf(r.values), dcls = fdv.cls;
-    const start = ri === (P ? rows.length - 2 : 3) ? " block-start" : "";
+    const start = ri === (NEW ? rows.length - 2 : 3) ? " block-start" : "";
     h += `<tr class="${start}"><th class="period" rowspan="2"><b>${esc(r.label)}</b><span>${esc(sub)}</span><em>${r.type === "F" ? "Forecast" : "Observed"}</em></th>
       <td class="kind">Value</td>
       ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], P && P.window > 1 && (c.key === "erc" || c.key === "bi") ? 1 : DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day avg ERC-${fm} ${v.erc_avg}${P.bi ? ` · BI-${fm} ${v.bi_avg}` : ""} → ` : "") + `ERC class ${v.erc_cls + 1}${P.bi ? ` × BI class ${v.bi_cls + 1}` : ""}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "zone" ? `Average of ${f.n} FDRA ratings` : fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day avg ERC-${fm} ${v.erc_avg}${P.bi ? ` · BI-${fm} ${v.bi_avg}` : ""} → ` : "") + `ERC class ${v.erc_cls + 1}${P.bi ? ` × BI class ${v.bi_cls + 1}` : ""}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" || fdv.method === "zone" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
@@ -746,7 +750,7 @@ function ratingSummary(f) {
     <div class="footnote">For each period, the VPD class and SFDI class are combined in the matrix to give the fire danger rating.</div></div>`;
 }
 function legendHtml(f) {
-  if (f && f.planner) return `<div class="legend"><span class="lab">Fire Danger legend</span>${CLASSES.map(c => `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b></span>`).join("")}</div>`;
+  if (f && (f.planner || f.zoneAvg)) return `<div class="legend"><span class="lab">Fire Danger legend</span>${CLASSES.map(c => `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b></span>`).join("")}</div>`;
   return `<div class="legend"><span class="lab">Fire Danger / Percentile legend</span>${CLASSES.map(c =>
     `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b> (${c.min === 0 ? "<" + (c.max + 1) : c.max === 100 ? "≥" + c.min : c.min + "–" + c.max}th)</span>`).join("")}</div>`;
 }
@@ -764,63 +768,71 @@ function ratingBox(f) {
 }
 function titleCase(s) { return String(s || "").toLowerCase().replace(/\b\w/g, c => c.toUpperCase()); }
 
+/* Zone fire danger = average of the FDRA ratings: Low 1, Moderate 2, High 3, Very High 4, Extreme 5; .5 rounds up */
+function avgClass(idx) {
+  const xs = idx.filter(i => i != null && i >= 0);
+  return xs.length ? Math.floor(xs.reduce((a, b) => a + b + 1, 0) / xs.length + 0.5) - 1 : null;
+}
+const rowsOf = f => f.detail_report || f.report;
 /* Zone numbers = average of its FDRAs (each FDRA's percentile is against its own history) */
 function zoneReport(z) {
-  const list = BY_ZONE[z];
-  return {report: list[0].report.map((r0, i) => {
-    const vals = list.map(f => f.report[i]?.values).filter(Boolean);
+  const list = BY_ZONE[z].filter(f => !f.noData);
+  return {zoneAvg: true, n: list.length, report: rowsOf(list[0]).map((r0, i) => {
+    const vals = list.map(f => rowsOf(f)[i]?.values).filter(Boolean);
     const out = {};
     if (vals.length) {
       const keys = new Set(vals.flatMap(v => Object.keys(v)));
       keys.forEach(k => {
-        if (k === "fd" || k === "fd_method") return;
+        if (k === "fd" || k === "fd_method" || /_(cls|pcls|avg)$/.test(k)) return;
         const xs = vals.map(v => v[k]).filter(x => x != null);
         if (!xs.length) return (out[k] = null);
         const m = xs.reduce((a, b) => a + b, 0) / xs.length;
         out[k] = k.endsWith("_pct") ? Math.round(m) : +m.toFixed(DEC[k] || 0);
       });
     }
-    // Zone fire danger = the highest FDRA (as the plans pick the highest level for the zone)
-    const fds = vals.map(v => fdOf(v)).filter(x => x.cls);
-    if (vals.length && fds.length) {
-      const top = fds.reduce((a, b) => CLASSES.indexOf(b.cls) > CLASSES.indexOf(a.cls) ? b : a);
-      out.fd = CLASSES.indexOf(top.cls); out.fd_method = top.method;
-    }
+    const zi = avgClass(vals.map(v => CLASSES.indexOf(fdOf(v).cls)));
+    if (zi != null) { out.fd = zi; out.fd_method = "zone"; }
     return {label: r0.label, days: r0.days, type: r0.type, values: vals.length ? out : null};
   })};
 }
 
-function ownMethodNote(list) {
-  const own = (list || []).filter(f => f.planner);
-  return own.length ? `, except ${own.map(f => esc(f.name) + " (" + esc(f.planner.label) + ")").join(", ")}, which use${own.length === 1 ? "s its" : " their"} own rating method` : "";
+function methodNote(list) {
+  const all = (list || []).filter(f => !f.noData), own = all.filter(f => f.planner), base = META.fire_danger_method === "matrix" ? "the VPD × SFDI rating matrix" : "the " + META.fire_danger_index.toUpperCase() + " percentile";
+  if (own.length && own.length === all.length) return "Each FDRA is rated with its adopted thresholds.";
+  if (own.length) return `FDRAs with adopted thresholds are rated with them; the others are rated with ${base}.`;
+  return `Fire danger is calculated with ${base}.`;
 }
-function outlookTable(list, {groupByZone = false, zoneRow = null, zones = null, footnote = true} = {}) {
-  const periods = META.fdras[0].report.map(r => r.label);
+function outlookTable(list, {groupByZone = false, zoneRow = null, zones = null, footnote = true, detail = false} = {}) {
+  const R = f => detail ? rowsOf(f) : f.report, first = R(META.fdras.find(f => !f.noData) || META.fdras[0]);
+  const periods = first.map(r => r.label);
   const pk = META.fire_danger_index + "_pct";
   const cell = v => {
     const d = fdOf(v), c = d.cls;
     return `<td class="oc" style="background:${c ? c.color : "transparent"}">${c ? `<b>${esc(c.name)}</b>${d.pct != null ? ` <small>${d.pct}%</small>` : ""}` : "—"}</td>`;
   };
-  const head = META.fdras[0].report.map(r => `<th>${esc(r.label.replace("Average ", "Avg "))}<span>${esc(r.days.length === 1 ? dayLabel(r.days[0]) : r.days.length + " days")}</span></th>`).join("");
+  const md = iso => { const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };
+  const sub = r => detail ? (r.days.length === 1 ? md(r.days[0]) : r.days.length ? md(r.days[0]) + " → " + md(r.days[r.days.length - 1]) : "")
+    : r.days.length === 1 ? dayLabel(r.days[0]) : r.days.length + " days";
+  const head = first.map(r => `<th>${esc(r.label.replace("Average ", "Avg "))}<span>${esc(sub(r))}</span></th>`).join("");
   const row = (f, isZone) => {
     const d = currentDanger(f);
     const off = ratings[f.key] && classByName(ratings[f.key].rating);
     return `<tr class="${isZone ? "zrow" : "frow"}" ${isZone ? `data-zone="${esc(f.zone)}"` : `data-fdra="${esc(f.key)}"`} tabindex="0">
-      <th>${isZone ? `<b>${esc(zoneLabel(f.zone))}</b> <small>(highest FDRA)</small>` : esc(f.name)}</th>
-      ${f.report.map(r => cell(r.values)).join("")}
+      <th>${isZone ? `<b>${esc(zoneLabel(f.zone))}</b> <small>(zone average)</small>` : esc(f.name)}</th>
+      ${(isZone ? f.report : R(f)).map(r => cell(r.values)).join("")}
       <td class="oc off" style="background:${!isZone && off ? off.color : "transparent"}">${isZone ? "" : off ? `<b>${esc(off.name)}</b>` : `<span class="muted">Not set</span>`}</td></tr>`;
   };
   let body = "";
   if (zoneRow) body += row({...zoneRow, zone: zoneRow.zone}, true);
   if (groupByZone) {
     (zones || ZONES()).filter(z => BY_ZONE[z]).forEach(z => {
-      const w = zoneWorst(z);
+      const w = zoneDanger(z);
       body += `<tr class="zhead" data-zone="${esc(z)}" tabindex="0"><th colspan="${periods.length + 2}"><span class="sw" style="background:${w ? w.color : "transparent"}"></span>${esc(zoneLabel(z))} <small>${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"} · View zone ›</small></th></tr>`;
       body += BY_ZONE[z].map(f => row(f, false)).join("");
     });
   } else body += list.map(f => row(f, false)).join("");
   return `<div class="tbl-scroll"><table class="outlook"><thead><tr><th>FDRA</th>${head}<th>Official rating</th></tr></thead><tbody>${body}</tbody></table></div>
-    ${footnote ? `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}${ownMethodNote(list)}. Select a row for details.</div>` : ""}`;
+    ${footnote ? `<div class="footnote">${methodNote(list)} Select a row for details.</div>` : ""}`;
 }
 
 // Overview: one block per state — colored state header, then its own table (with column headers)
@@ -836,7 +848,7 @@ function stateBlocks() {
         <div class="state-badge"><small>Highest FDRA</small><span class="badge" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
       </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false})}</section>`;
   }).join("");
-  return out + `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}${ownMethodNote(META.fdras)}. Select a row for details.</div>`;
+  return out + `<div class="footnote">${methodNote(META.fdras)} Select a row for details.</div>`;
 }
 function stationLinks(ids) {
   return ids.map(id => STATIONS[id] ? `<button class="st" data-station="${esc(id)}">${esc(titleCase(STATIONS[id].name))}</button>` : esc(id)).join(", ");
@@ -858,11 +870,11 @@ function renderView() {
     const c = fdOf(today).cls;
     const note = without ? ` · ${without} without data yet` : "";
     el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(zoneLabel(z))}</h2>
-        <div class="rating-box"><span style="color:var(--ink-3)">Zone today (highest FDRA)</span><span class="badge" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "No data"}</span></div>
+        <div class="rating-box"><span style="color:var(--ink-3)" title="Average of the FDRA ratings">Zone today · Forecast</span><span class="badge" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "No data"}</span></div>
         <div class="pmeta">${withData.length ? `Summary of ${withData.length} FDRA${withData.length === 1 ? "" : "s"} (${withData.map(f => esc(f.name)).join(", ")})${note} · ${ids.length} stations` : `${BY_ZONE[z].length} FDRAs · no station data yet`}</div></div>
-        ${zr ? legendHtml() + reportTable(zr) + `<div class="footnote">Zone values are averages of FDRAs with available data; percentiles are calculated against each FDRA's own history. Zone fire danger reflects the highest-rated FDRA.</div>`
+        ${zr ? legendHtml(zr) + reportTable(zr) + `<div class="footnote">Zone values and percentiles are the average of the zone's FDRAs; each percentile is calculated against its FDRA's own history. Zone fire danger is the average of the FDRA ratings (Low 1, Moderate 2, High 3, Very High 4, Extreme 5), with halves rounded up.</div>`
              : `<div class="nodata"><b>No station data yet for this zone.</b><br>The zone summary will be available once station data is added for its FDRAs.</div>`}
-        <h3 class="sub">FDRAs in this zone</h3>${outlookTable(BY_ZONE[z], {zoneRow: zr ? {...zr, zone: z} : null})}</section>`;
+        <h3 class="sub">FDRAs in this zone</h3>${outlookTable(BY_ZONE[z], {zoneRow: zr ? {...zr, zone: z} : null, detail: true})}</section>`;
     return;
   }
   const f = FDRA[state.fdra];       // FDRA view
@@ -1135,7 +1147,7 @@ function openZonePanel(z) {
   const list = BY_ZONE[z]; if (!list) return;
   panelCtx = {type: "zone", key: z};
   const ids = [...new Set(list.flatMap(f => f.sig_raws))];
-  const w = zoneWorst(z);
+  const w = zoneDanger(z);
   $("#dTitle").textContent = zoneLabel(z);
   $("#dSub").textContent = `${list.length} FDRA${list.length === 1 ? "" : "s"} · ${ids.length} station${ids.length === 1 ? "" : "s"}`;
   const body = () => {
