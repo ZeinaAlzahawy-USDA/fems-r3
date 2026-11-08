@@ -150,6 +150,7 @@ table.rep td.pct{color:var(--cls-ink);font-size:13px}
 table.rep td.fd{font-weight:700;color:var(--cls-ink);min-width:96px}
 table.rep tr.block-start th, table.rep tr.block-start td{border-top:2px solid var(--line-strong)}
 table.rep td.na{color:var(--ink-3)}
+table.rep td.pct.pg{color:var(--ink-3)}
 
 .under{margin-top:16px}
 .bp h3{font-size:14px;margin:0 0 6px}
@@ -435,7 +436,15 @@ const CFG = window.APP_CONFIG;
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtNum = (v, d = 0) => v == null ? "—" : Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
-const DEC = {gsi: 2, precip: 2};
+const DEC = {gsi: 2, precip: 2, sc: 1};
+// Percentile cell color. FDRAs with their own planner method: ERC and BI percentiles are colored by the
+// planner's numbers (expressed as percentiles of the FDRA's history); the other percentiles use the standard ranges.
+function pctClass(f, v, key) {
+  if (f && f.planner && (key === "erc" || key === "bi")) return v[key + "_pcls"] != null ? CLASSES[v[key + "_pcls"]] : null;
+  return classForPct(v[key + "_pct"]);
+}
+const PLANNER_COLS = [{key: "ic", label: "IC", group: "Fuels", pct: true}, {key: "sc", label: "SC", group: "Fuels", pct: true}];
+const plannerRange = (lim, i) => i < lim.length ? "≤ " + lim[i] : "≥ " + (lim[lim.length - 1] + 1);
 
 let META, CLASSES, BY_ZONE = {}, FDRA = {}, STATIONS = {};
 let ratings = {};          // FDRA_ZONE -> {rating, note, oid, edited}
@@ -456,7 +465,7 @@ function dayLabel(iso) {
 // Fire Danger for one report row: VPD x SFDI matrix (fd computed in build_web_data.py), else ERC percentile
 function fdOf(v) {
   if (!v) return {cls: null, pct: null, method: null};
-  if (v.fd != null) return {cls: CLASSES[v.fd], method: v.fd_method, pct: v.fd_method === "matrix" ? null : v[META.fire_danger_index + "_pct"]};
+  if (v.fd != null) return {cls: CLASSES[v.fd], method: v.fd_method, pct: v.fd_method === "matrix" || v.fd_method === "planner" ? null : v[META.fire_danger_index + "_pct"]};
   const p = v[META.fire_danger_index + "_pct"];
   return {cls: classForPct(p), pct: p, method: p != null ? META.fire_danger_index : null};
 }
@@ -600,37 +609,60 @@ function renderCrumbs() {
 
 /* ---------------- report tables ---------------- */
 function reportTable(f) {
-  const cols = META.report_cols;
+  const P = f.planner, fm = f.fuel_model || "Y";
+  let cols = META.report_cols;
+  if (P) {   // own method: ERC-<fm>, BI-<fm>, then IC and SC
+    const i = cols.findIndex(c => c.key === "bi") + 1;
+    cols = [...cols.slice(0, i), ...PLANNER_COLS, ...cols.slice(i)].map(c => c.key === "erc" || c.key === "bi" ? {...c, label: c.label + "-" + fm} : c);
+  }
+  const rows = P && f.detail_report ? f.detail_report : f.report;
   const fuels = cols.filter(c => c.group === "Fuels"), wx = cols.filter(c => c.group === "Weather");
   const idx = META.fire_danger_index.toUpperCase();
   let h = `<div class="tbl-scroll"><table class="rep"><thead>
     <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
       <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
-      <th class="gsep" rowspan="2" title="${META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(fdMethodLabel())})</span></th></tr>
+      <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : fdMethodLabel())})</span></th></tr>
     <tr>${fuels.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}
         ${wx.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}</tr>
     </thead><tbody>`;
-  f.report.forEach((r, ri) => {
+  rows.forEach((r, ri) => {
     const v = r.values || {};
     const days = r.days || [];
     const sub = days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
     const fdv = fdOf(r.values), dcls = fdv.cls;
-    const start = ri === 3 ? " block-start" : "";
+    const start = ri === (P ? rows.length - 2 : 3) ? " block-start" : "";
     h += `<tr class="${start}"><th class="period" rowspan="2"><b>${esc(r.label)}</b><span>${esc(sub)}</span><em>${r.type === "F" ? "Forecast" : "Observed"}</em></th>
       <td class="kind">Value</td>
       ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" ? `ERC-${fm} class ${v.erc_cls + 1} × BI-${fm} class ${v.bi_cls + 1}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? `<br><small style='font-weight:500'>ERC class ${v.erc_cls + 1} · BI class ${v.bi_cls + 1}</small>` : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
-        const p = v[c.key + "_pct"], k = classForPct(p);
-        return `<td class="pct${i === 0 ? " gsep" : ""}" style="background:${k ? k.color : "transparent"}" title="${k ? esc(k.name) : ""}">${p == null ? "—" : p + "%"}</td>`;
+        const p = v[c.key + "_pct"], k = pctClass(f, v, c.key);
+        return `<td class="pct${i === 0 ? " gsep" : ""}${P && !k ? " pg" : ""}" style="background:${k ? k.color : "transparent"}" title="${k ? esc(k.name) : ""}">${p == null ? "—" : p + "%"}</td>`;
       }).join("")}</tr>`;
   });
   return h + "</tbody></table></div>";
 }
+function plannerBreakpoints(f) {
+  const P = f.planner, fm = f.fuel_model || "Y", R = P.pct_ranges || {};
+  const pr = (k, i) => R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
+  return `<div class="bp"><h3>Fire Danger Breakpoints · ERC-${esc(fm)} and BI-${esc(fm)}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}</th><th>ERC-${esc(fm)} percentile</th><th>BI-${esc(fm)}</th><th>BI-${esc(fm)} percentile</th><th>Other percentiles</th></tr></thead><tbody>
+    ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td><td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td><td>${(c.min || 1) + (c.max === 100 ? "\u2009–\u2009100" : "\u2009–\u2009" + c.max)}%</td></tr>`).join("")}</tbody></table>
+    <div class="footnote">Each number is the top of its class; the last class is anything above the fourth number. The ERC-${esc(fm)} and BI-${esc(fm)} percentile columns show where these numbers fall in this FDRA's ${esc(f.analysis_period || "")} history and set the colors of the ERC and BI percentiles in the table. All other percentiles (IC, SC, SFDI, VPD, HDWI, 100HR, 1000HR, KBDI, GSI) are colored with the standard ranges in the last column. 100HR, 1000HR and GSI are shown as dryness percentiles (higher = drier). Fuel model ${esc(fm)}.</div></div>`;
+}
+function plannerMatrix(f) {
+  const P = f.planner, fm = f.fuel_model || "Y";
+  const tv = (f.report.find(r => r.label === "Today") || {}).values || {};
+  const ti = tv.bi_cls, tj = tv.erc_cls, ab = ["L", "M", "H", "VH", "E"];
+  return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
+      <tr><th>BI-${esc(fm)} ↓ / ERC-${esc(fm)} →</th>${P.grid[0].map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
+      ${P.grid.map((row, i) => `<tr><th>${plannerRange(P.bi, i)}</th>${row.map((c, j) => `<td class="${i === ti && j === tj ? "now" : ""}" style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}${i === ti && j === tj ? " (today)" : ""}"><b>${ab[c]}</b></td>`).join("")}</tr>`).join("")}
+    </tbody></table><div class="footnote">The ERC-${esc(fm)} class (column) and BI-${esc(fm)} class (row) meet in the matrix to give the fire danger. The 7-day rows use the 7-day averages.${ti != null && tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
+}
 function breakpointTable(f) {
+  if (f.planner) return plannerBreakpoints(f);
   const ix = META.breakpoint_indices;
   return `<div class="bp"><h3>Fire Danger Breakpoints</h3><table class="bpt"><thead><tr><th>Percentile</th>${ix.map(k => `<th>${k.toUpperCase()}</th>`).join("")}<th>Fire Danger</th></tr></thead><tbody>
     ${f.breakpoints.map((b, i) => {
@@ -642,6 +674,7 @@ function breakpointTable(f) {
     <div class="footnote">Analysis period ${esc(f.analysis_period || "")} · Fuel model ${esc(f.fuel_model)}${(META.inverted_pct || []).length ? ` · ${META.inverted_pct.map(k => (META.report_cols.find(c => c.key === k) || {}).label || k).join(", ")} are shown as dryness percentiles (higher = drier)` : ""}</div></div>`;
 }
 function matrixTable(f) {
+  if (f.planner) return plannerMatrix(f);
   if (META.fire_danger_method !== "matrix" || !f.breakpoints || !f.breakpoints[0].vpd || !f.breakpoints[0].sfdi) return "";
   const M = META.fd_matrix, B = f.breakpoints, last = B.length - 1;
   const rng = (k, i) => { const [lo, hi] = B[i][k]; return i === 0 ? "0 – " + fmtNum(hi) : i === last ? fmtNum(lo) + "+" : fmtNum(lo) + " – " + fmtNum(hi); };
@@ -666,7 +699,8 @@ function ratingSummary(f) {
     </tbody></table>
     <div class="footnote">For each period, the VPD class and SFDI class are combined in the matrix to give the fire danger rating.</div></div>`;
 }
-function legendHtml() {
+function legendHtml(f) {
+  if (f && f.planner) return `<div class="legend"><span class="lab">Fire Danger legend</span>${CLASSES.map(c => `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b></span>`).join("")}</div>`;
   return `<div class="legend"><span class="lab">Fire Danger / Percentile legend</span>${CLASSES.map(c =>
     `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b> (${c.min === 0 ? "<" + (c.max + 1) : c.max === 100 ? "≥" + c.min : c.min + "–" + c.max}th)</span>`).join("")}</div>`;
 }
@@ -707,6 +741,10 @@ function zoneReport(z) {
   })};
 }
 
+function ownMethodNote(list) {
+  const own = (list || []).filter(f => f.planner);
+  return own.length ? `, except ${own.map(f => esc(f.name) + " (" + esc(f.planner.label) + ")").join(", ")}, which use${own.length === 1 ? "s its" : " their"} own rating method` : "";
+}
 function outlookTable(list, {groupByZone = false, zoneRow = null, zones = null, footnote = true} = {}) {
   const periods = META.fdras[0].report.map(r => r.label);
   const pk = META.fire_danger_index + "_pct";
@@ -733,7 +771,7 @@ function outlookTable(list, {groupByZone = false, zoneRow = null, zones = null, 
     });
   } else body += list.map(f => row(f, false)).join("");
   return `<div class="tbl-scroll"><table class="outlook"><thead><tr><th>FDRA</th>${head}<th>Official rating</th></tr></thead><tbody>${body}</tbody></table></div>
-    ${footnote ? `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Select a row for details.</div>` : ""}`;
+    ${footnote ? `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}${ownMethodNote(list)}. Select a row for details.</div>` : ""}`;
 }
 
 // Overview: one block per state — colored state header, then its own table (with column headers)
@@ -749,7 +787,7 @@ function stateBlocks() {
         <div class="state-badge"><small>Highest FDRA</small><span class="badge" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
       </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false})}</section>`;
   }).join("");
-  return out + `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}. Select a row for details.</div>`;
+  return out + `<div class="footnote">Fire danger is calculated ${META.fire_danger_method === "matrix" ? "with the VPD × SFDI rating matrix" : "from the " + META.fire_danger_index.toUpperCase() + " percentile"}${ownMethodNote(META.fdras)}. Select a row for details.</div>`;
 }
 function stationLinks(ids) {
   return ids.map(id => STATIONS[id] ? `<button class="st" data-station="${esc(id)}">${esc(titleCase(STATIONS[id].name))}</button>` : esc(id)).join(", ");
@@ -789,12 +827,12 @@ function renderView() {
   el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(f.name)} FDRA</h2>
       <div class="rating-box">${ratingBox(f)}</div>
       <div class="pmeta">Zone ${esc(zoneLabel(f.zone))} · Reporting stations: ${stationLinks(f.sig_raws)}</div></div>
-      ${legendHtml()}${reportTable(f)}<div class="under">${breakpointTable(f)}${matrixTable(f)}${SHOW_RATING_SUMMARY ? ratingSummary(f) : ""}</div></section>
+      ${legendHtml(f)}${reportTable(f)}<div class="under">${breakpointTable(f)}${matrixTable(f)}${SHOW_RATING_SUMMARY ? ratingSummary(f) : ""}</div></section>
     <section class="panel" id="chartPanel"><div class="phead"><h2>Season charts</h2>
       <div class="rating-box seg" role="group" aria-label="Chart range">
         <button data-range="year" aria-pressed="${chartRange === "year"}">This year</button>
         <button data-range="90" aria-pressed="${chartRange === "90"}">Last 90 days</button></div>
-      <div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · fire danger bands based on ${esc(f.analysis_period)} percentiles</div></div>
+      <div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · ${f.planner ? "fire danger bands from this FDRA's ERC-" + esc(f.fuel_model) + " and BI-" + esc(f.fuel_model) + " breakpoints" : "fire danger bands based on " + esc(f.analysis_period) + " percentiles"}</div></div>
       <div class="charts" id="charts"><div class="muted">Loading charts…</div></div></section>`;
   loadCharts(f);
 }
@@ -868,7 +906,9 @@ function svgChart(box, f, d, k) {
   const x1 = chartRange === "year" ? new Date(yr + "-12-31T00:00:00") : new Date(last + "T00:00:00");
   const tx = iso => m.l + (new Date(iso + "T00:00:00") - x0) / (x1 - x0) * iw;
   // bands from this FDRA's breakpoints (upper value of each class)
-  const bands = bpIdx >= 0 && f.breakpoints ? f.breakpoints.map((b, i) => ({c: CLASSES[i], hi: b[k][1], lo: i ? f.breakpoints[i - 1][k][1] : 0})) : [];
+  const lim = f.planner && f.planner[k];   // own method: bands are the planner's numbers
+  const bands = lim ? CLASSES.map((c, i) => ({c, hi: lim[Math.min(i, lim.length - 1)], lo: i ? lim[i - 1] : 0}))
+    : bpIdx >= 0 && f.breakpoints ? f.breakpoints.map((b, i) => ({c: CLASSES[i], hi: b[k][1], lo: i ? f.breakpoints[i - 1][k][1] : 0})) : [];
   const climo = d.climo ? d.climo.map(c => ({doy: c.doy, avg: c[k + "_avg"], max: c[k + "_max"]})) : [];
   const allV = [...obs, ...fc].map(r => r.v).concat(bands.map(b => b.hi), climo.map(c => c.max || 0));
   const ymax = Math.ceil(Math.max(...allV) * 1.08 / 5) * 5 || 10;
@@ -953,12 +993,12 @@ function fdraSummary(f) {
   const v = periodVals(f);
   const label = k => (META.report_cols.find(c => c.key === k) || {}).label || k.toUpperCase();
   const bars = PCT_INDICES.filter(k => v[k] != null).map(k => {
-    const p = v[k + "_pct"], c = classForPct(p);
+    const p = v[k + "_pct"], c = pctClass(f, v, k);
     return `<div class="pb"><span class="pb-l">${esc(label(k))}</span><span class="pb-v">${fmtNum(v[k], DEC[k] || 0)}</span>
       <span class="pb-t"><i style="width:${p == null ? 0 : Math.max(2, p)}%;background:${c ? c.color : "transparent"}"></i></span>
       <span class="pb-p">${p == null ? "—" : p + "%"}</span></div>`;
   }).join("");
-  const outlook = f.report.map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
+  const outlook = (f.planner && f.detail_report ? f.detail_report : f.report).map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
     return `<div class="ol"><span class="ol-l">${esc(r.label.replace("5-Day ", "5-Day "))}</span><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span><span class="ol-p">ERC ${p == null ? "—" : p + "%"}</span></div>`; }).join("");
   const hist = `<div id="histCmp" class="muted" style="font-size:12.5px">Loading…</div>`;
   return `<h4>FDRA Percentiles · ${esc(dayLabel(panelDay === "obs" ? META.latest_obs_date : META.today))}</h4><div class="pbars">${bars}</div>
@@ -1188,7 +1228,7 @@ function openEditor(key) {
   const f = FDRA[key], calc = calcDanger(f), r = ratings[key];
   editingKey = key;
   $("#editTitle").textContent = f.name + " FDRA (" + f.zone + ")";
-  $("#editCalc").textContent = "Calculated today: " + (calc.cls ? `${calc.cls.name} (${calc.method === "matrix" ? "VPD × SFDI" : META.fire_danger_index.toUpperCase() + " " + calc.pct + "%"})` : "no data");
+  $("#editCalc").textContent = "Calculated today: " + (calc.cls ? `${calc.cls.name} (${calc.method === "planner" ? f.planner.label : calc.method === "matrix" ? "VPD × SFDI" : META.fire_danger_index.toUpperCase() + " " + calc.pct + "%"})` : "no data");
   $("#editRating").innerHTML = `<option value="">— Use calculated rating —</option>` + CLASSES.map(c => `<option${r && classByName(r.rating) === c ? " selected" : ""}>${esc(c.name)}</option>`).join("");
   $("#editNote").value = r?.note || "";
   $("#editDlg").showModal();
