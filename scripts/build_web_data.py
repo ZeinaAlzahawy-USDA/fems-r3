@@ -436,10 +436,17 @@ def main():
                      ("7-Day Forecast", fc, fwx, ([today] if today else []) + future[:6])]      # today + next 6 days
             detail_report = [{"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                               "values": day_values(nf, wx, days) if days else None} for label, nf, wx, days in rows]
+            # Day-by-day strip: each of the last 7 observed days and the 7 forecast days on its own
+            daily = []
+            for nf, wx, days in ((nfdr, wxd, obs_days[-7:]), (fc, fwx, ([today] if today else []) + future[:6])):
+                for d in days:
+                    v = day_values(nf, wx, [d]) or {}
+                    daily.append({"d": d, "type": "O" if nf is nfdr else "F",
+                                  **{k: v.get(k) for k in ("erc", "bi", "erc_cls", "bi_cls", "fd")}})
             ranges = lambda tops: [[1 if i == 0 else tops[i - 1] + 1, tops[i] if i < len(tops) else 100] for i in range(len(tops) + 1)]
             if any(None in pm_tops[k] for k in ("erc", "bi")):
                 print(f"WARNING: {key} has no percentile history; percentile colors left blank")
-            planner = {"label": f"ERC-{fm} × BI-{fm}", "erc": pm["erc"], "bi": pm["bi"], "grid": pm["grid"],
+            planner = {"label": f"ERC-{fm} × BI-{fm}", "erc": pm["erc"], "bi": pm["bi"], "grid": pm["grid"], "daily": daily,
                        "pct_ranges": {k: ranges(pm_tops[k]) if None not in pm_tops[k] else None for k in ("erc", "bi")}}
 
         breakpoints = []
