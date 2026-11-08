@@ -233,7 +233,7 @@ button.lnk.back{display:inline-block;margin-bottom:10px;font-size:13px}
 .pb-l{color:var(--ink-2);font-weight:600}.pb-v{text-align:right}.pb-p{text-align:right;color:var(--ink-2)}
 .pb-t{height:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:3px;overflow:hidden;position:relative}
 .pb-t i{display:block;height:100%;border-right:1px solid rgba(0,0,0,.25)}
-.olrow{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.olrow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .ol{display:flex;flex-direction:column;align-items:flex-start;gap:4px;border:1px solid var(--line);border-radius:6px;padding:6px 7px;background:var(--surface-2)}
 .ol-l{font-size:11.5px;font-weight:600;color:var(--ink-2)}.ol-p{font-size:11.5px;color:var(--ink-3)}
 .dtabs.big button{font-size:14px}
@@ -478,7 +478,7 @@ function fdOf(v) {
 }
 const fdMethodLabel = () => META.fire_danger_method === "matrix" ? "VPD × SFDI" : META.fire_danger_index.toUpperCase() + " %ile";
 function calcDanger(f) {   // calculated rating for "Today"
-  const today = f.report.find(r => r.label === "Today")?.values || f.report[0]?.values;
+  const R = rowsOf(f), today = R.find(r => r.label === "Today")?.values || R[0]?.values;
   return fdOf(today);
 }
 function currentDanger(f) { // official if set, else calculated
@@ -618,15 +618,16 @@ function renderCrumbs() {
 function reportTable(f) {
   const P = f.planner, fm = f.fuel_model || "Y";
   let cols = META.report_cols;
-  if (f.zoneAvg) {   // zone table: same columns as the FDRA tables (IC and SC after BI)
+  if (f.zoneAvg || !P) {   // zone and FDRA tables: IC and SC after BI
     const i = cols.findIndex(c => c.key === "bi") + 1;
     cols = [...cols.slice(0, i), ...PLANNER_COLS, ...cols.slice(i)];
+    if (!f.zoneAvg && f.fuel_model) cols = cols.map(c => c.key === "erc" || c.key === "bi" ? {...c, label: c.label + "-" + fm} : c);
   }
   if (P) {   // own method: ERC-<fm>, BI-<fm>, then IC and SC
     const i = cols.findIndex(c => c.key === "bi") + 1;
     cols = [...cols.slice(0, i), ...PLANNER_COLS, ...cols.slice(i)].map(c => c.key === "erc" || c.key === "bi" ? {...c, label: c.label + "-" + fm} : c);
   }
-  const rows = P && f.detail_report ? f.detail_report : f.report, NEW = !!(P || f.zoneAvg);
+  const rows = f.zoneAvg ? f.report : rowsOf(f), NEW = !!(P || f.zoneAvg || f.detail_report);
   const fuels = cols.filter(c => c.group === "Fuels"), wx = cols.filter(c => c.group === "Weather");
   const idx = META.fire_danger_index.toUpperCase();
   let h = `<div class="tbl-scroll"><table class="rep"><thead>
@@ -663,14 +664,14 @@ function reportTable(f) {
 }
 // Day-by-day table under the main table: each observed and forecast day on its own
 function dailyTable(f) {
-  const D = (f.planner || {}).daily || [], fm = f.fuel_model || "Y";
+  const D = f.daily || [], fm = f.fuel_model || "Y", P = f.planner || {window: 1};
   if (!D.length) return "";
   const obs = D.filter(x => x.type === "O"), fc = D.filter(x => x.type === "F");
   const md = iso => { const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };
   const name = (x, i, arr) => x.type === "O" && i === arr.length - 1 ? "Yesterday" : x.type === "F" && i === 0 ? "Today" : x.type === "F" && i === 1 ? "Tomorrow"
     : new Date(x.d + "T12:00:00").toLocaleDateString("en-US", {weekday: "short"});
   const head = arr => arr.map((x, i) => `<th class="${i === 0 ? "gsep" : ""}"><b>${esc(name(x, i, arr))}</b><span>${md(x.d)}</span></th>`).join("");
-  const dec = f.planner.window > 1 ? 1 : 0;   // averaged methods: one decimal so the averages can be checked
+  const dec = P.window > 1 ? 1 : 0;   // averaged methods: one decimal so the averages can be checked
   const cells = (arr, k) => arr.map((x, i) => `<td class="${i === 0 ? "gsep" : ""}${x[k] == null ? " na" : ""}">${fmtNum(x[k], dec)}</td>`).join("");
   const fdc = arr => arr.map((x, i) => { const c = x.fd != null ? CLASSES[x.fd] : null;
     return `<td class="fd${i === 0 ? " gsep" : ""}" style="background:${c ? c.color : "transparent"}">${c ? esc(c.name) : "—"}</td>`; }).join("");
@@ -680,11 +681,14 @@ function dailyTable(f) {
       <tr>${head(obs)}${head(fc)}</tr></thead><tbody>
       <tr><th class="rl">ERC-${esc(fm)}</th>${cells(obs, "erc")}${cells(fc, "erc")}</tr>
       <tr><th class="rl">BI-${esc(fm)}</th>${cells(obs, "bi")}${cells(fc, "bi")}</tr>
-      ${f.planner.window > 1 ? `<tr><th class="rl">ERC-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "erc_avg")}${cells(fc, "erc_avg")}</tr>
-      ${f.planner.bi ? `<tr><th class="rl">BI-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}` : ""}
-      <tr><th class="rl">Fire Danger${f.planner.window > 1 ? ` <small class="avgt">${f.planner.window}-day avg</small>` : ""}</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
-    <div class="footnote">${(() => { const ix = f.planner.bi ? `ERC-${esc(fm)} and BI-${esc(fm)}` : `ERC-${esc(fm)}`;
-      return f.planner.window > 1 ? `Each day is rated from the ${f.planner.window}-day average of ${ix} ending that day.` : `Each day is rated from that day's FDRA-average ${ix}.`; })()}</div>`;
+      ${f.planner ? "" : `<tr><th class="rl">SFDI</th>${cells(obs, "sfdi")}${cells(fc, "sfdi")}</tr>
+      <tr><th class="rl">VPD</th>${cells(obs, "vpd")}${cells(fc, "vpd")}</tr>`}
+      ${P.window > 1 ? `<tr><th class="rl">ERC-${esc(fm)} <small class="avgt">${P.window}-day avg</small></th>${cells(obs, "erc_avg")}${cells(fc, "erc_avg")}</tr>
+      ${P.bi ? `<tr><th class="rl">BI-${esc(fm)} <small class="avgt">${P.window}-day avg</small></th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}` : ""}
+      <tr><th class="rl">Fire Danger${P.window > 1 ? ` <small class="avgt">${P.window}-day avg</small>` : ""}</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
+    <div class="footnote">${(() => { if (!f.planner) return "Each day is rated from that day's FDRA-average VPD and SFDI percentiles in the rating matrix.";
+      const ix = P.bi ? `ERC-${esc(fm)} and BI-${esc(fm)}` : `ERC-${esc(fm)}`;
+      return P.window > 1 ? `Each day is rated from the ${P.window}-day average of ${ix} ending that day.` : `Each day is rated from that day's FDRA-average ${ix}.`; })()}</div>`;
 }
 const yearsOf = f => { const y = String(f.analysis_period || "").match(/\d{4}/g); return y && y.length > 1 ? y[0] + "–" + y[y.length - 1] : "historical"; };
 function plannerBreakpoints(f) {
@@ -750,7 +754,7 @@ function ratingSummary(f) {
     <div class="footnote">For each period, the VPD class and SFDI class are combined in the matrix to give the fire danger rating.</div></div>`;
 }
 function legendHtml(f) {
-  if (f && (f.planner || f.zoneAvg)) return `<div class="legend"><span class="lab">Fire Danger legend</span>${CLASSES.map(c => `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b></span>`).join("")}</div>`;
+  if (true) return `<div class="legend"><span class="lab">Fire Danger Legend</span>${CLASSES.map(c => `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b></span>`).join("")}</div>`;
   return `<div class="legend"><span class="lab">Fire Danger / Percentile legend</span>${CLASSES.map(c =>
     `<span class="cls" style="background:${c.color}"><b>${esc(c.name)}</b> (${c.min === 0 ? "<" + (c.max + 1) : c.max === 100 ? "≥" + c.min : c.min + "–" + c.max}th)</span>`).join("")}</div>`;
 }
@@ -773,7 +777,7 @@ function avgClass(idx) {
   const xs = idx.filter(i => i != null && i >= 0);
   return xs.length ? Math.floor(xs.reduce((a, b) => a + b + 1, 0) / xs.length + 0.5) - 1 : null;
 }
-const rowsOf = f => f.detail_report || f.report;
+function rowsOf(f) { return f.detail_report || f.report; }   // 7-row table (same rows as the FDRA and zone pages)
 /* Zone numbers = average of its FDRAs (each FDRA's percentile is against its own history) */
 function zoneReport(z) {
   const list = BY_ZONE[z].filter(f => !f.noData);
@@ -860,7 +864,7 @@ function renderView() {
   if (!state.zone) {               // leadership view
     el.innerHTML = `<section class="panel"><div class="phead"><h2>Southwest fire danger outlook</h2>
         <div class="pmeta">${META.fdras.length} FDRAs across ${ZONES().length} zones. Select a zone above or a row below for details.</div></div>
-        ${legendHtml()}${stateBlocks()}</section>`;
+        ${legendHtml(null)}${stateBlocks()}</section>`;
     return;
   }
   if (!state.fdra) {               // zone view
@@ -889,12 +893,12 @@ function renderView() {
   el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(f.name)} FDRA</h2>
       <div class="rating-box">${ratingBox(f)}</div>
       <div class="pmeta">Zone ${esc(zoneLabel(f.zone))} · Reporting stations: ${stationLinks(f.sig_raws)}</div></div>
-      ${legendHtml(f)}${reportTable(f)}${f.planner ? dailyTable(f) : ""}<div class="under">${breakpointTable(f)}${matrixTable(f)}${SHOW_RATING_SUMMARY ? ratingSummary(f) : ""}</div></section>
+      ${legendHtml(f)}${reportTable(f)}${dailyTable(f)}<div class="under">${breakpointTable(f)}${matrixTable(f)}${SHOW_RATING_SUMMARY ? ratingSummary(f) : ""}</div></section>
     <section class="panel" id="chartPanel"><div class="phead"><h2>Season charts</h2>
       <div class="rating-box seg" role="group" aria-label="Chart range">
         <button data-range="year" aria-pressed="${chartRange === "year"}">This year</button>
         <button data-range="90" aria-pressed="${chartRange === "90"}">Last 90 days</button></div>
-      ${f.planner ? "" : `<div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · fire danger bands based on ${esc(f.analysis_period)} percentiles</div>`}</div>
+</div>
       <div class="charts" id="charts"><div class="muted">Loading charts…</div></div></section>`;
   loadCharts(f);
 }
@@ -1053,16 +1057,21 @@ let panelDay = "obs";          // "obs" = latest observed day (yesterday), "fc" 
 let panelTab = "fd";
 let panelCtx = null;           // what the popup is showing: {type:"zone"|"fdra", key}
 const ratingBadge = f => { const d = currentDanger(f); return `<span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : (f.noData ? "No data yet" : "No data")}</span>`; };
-const periodVals = f => (f.report.find(r => r.label === (panelDay === "obs" ? "Yesterday" : "Today")) || {}).values || {};
+const periodRow = (f, R) => (R.find(r => r.label === (panelDay === "obs" ? "Yesterday" : "Today")) || {});
+const periodVals = f => periodRow(f, rowsOf(f)).values || {};   // values the rating uses (multi-day averages for averaged methods)
+const dayVals = f => periodRow(f, f.report).values || {};       // that single day (station tables, history comparison)
+const mdy = iso => { if (!iso) return ""; const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };
+const backDays = (iso, n) => { const t = new Date(iso + "T12:00:00"); t.setDate(t.getDate() - n); return t.toISOString().slice(0, 10); };
 function stationDay(st, fm) {
   if (!st) return {};
   const n = panelDay === "obs" ? (st.latest || {})[fm] : (st.fc_today || {})[fm];
   const w = panelDay === "obs" ? st.wx_obs : st.wx_today;
   return {...(w || {}), ...(n || {})};
 }
-function daySwitch() {
-  const dl = panelDay === "obs" ? META.latest_obs_date : META.today;
-  return `<div class="fmsel"><span class="lbl">Day</span><button data-pday="obs" aria-pressed="${panelDay === "obs"}">Yesterday</button><button data-pday="fc" aria-pressed="${panelDay === "fc"}">Today</button><span class="lbl" style="margin-left:6px">${esc(dayLabel(dl))} · ${panelDay === "obs" ? "Observed" : "Forecast"}</span></div>`;
+function daySwitch(f) {
+  const dl = panelDay === "obs" ? META.latest_obs_date : META.today, W = f && f.planner && f.planner.window > 1 ? f.planner.window : 0;
+  const when = W ? `${mdy(backDays(dl, W - 1))} → ${mdy(dl)}` : mdy(dl);
+  return `<div class="fmsel"><span class="lbl">Day</span><button data-pday="obs" aria-pressed="${panelDay === "obs"}">Yesterday</button><button data-pday="fc" aria-pressed="${panelDay === "fc"}">Today</button><span class="lbl" style="margin-left:6px">${esc(when)} · ${panelDay === "obs" ? "Observed" : "Forecast"}</span></div>`;
 }
 function panelTabs() {
   return `<div class="dtabs" role="tablist"><button role="tab" data-ptab="fd" aria-selected="${panelTab === "fd"}">Fire Danger</button><button role="tab" data-ptab="wx" aria-selected="${panelTab === "wx"}">Weather</button></div>`;
@@ -1073,22 +1082,22 @@ function stationChips(ids, cur) {
 }
 const PANEL_LAYOUT = "tabs";   // FDRA popup: "tabs" = FDRA Summary | Stations, "scroll" = everything in one column
 let fdraView = "summary";
-const PCT_INDICES = ["erc", "bi", "sfdi", "vpd", "hdwi", "fm100", "fm1000", "kbdi", "gsi"];
+const PCT_INDICES = ["erc", "bi", "ic", "sc", "sfdi", "vpd", "hdwi", "fm100", "fm1000", "kbdi", "gsi"];
 function fdraSummary(f) {
   if (f.noData) return "";
-  const v = periodVals(f);
-  const label = k => (META.report_cols.find(c => c.key === k) || {}).label || k.toUpperCase();
+  const v = periodVals(f), P = f.planner, fm = f.fuel_model || "Y", W = P && P.window > 1 ? P.window : 0;
+  const label = k => f.fuel_model && (k === "erc" || k === "bi") ? k.toUpperCase() + "-" + fm : (META.report_cols.find(c => c.key === k) || {}).label || k.toUpperCase();
   const bars = PCT_INDICES.filter(k => v[k] != null).map(k => {
     const p = v[k + "_pct"], c = pctClass(f, v, k);
-    return `<div class="pb"><span class="pb-l">${esc(label(k))}</span><span class="pb-v">${fmtNum(v[k], DEC[k] || 0)}</span>
+    return `<div class="pb"><span class="pb-l">${esc(label(k))}</span><span class="pb-v">${fmtNum(v[k], W && (k === "erc" || k === "bi") ? 1 : DEC[k] || 0)}</span>
       <span class="pb-t"><i style="width:${p == null ? 0 : Math.max(2, p)}%;background:${c ? c.color : "transparent"}"></i></span>
       <span class="pb-p">${p == null ? "—" : p + "%"}</span></div>`;
   }).join("");
-  const outlook = (f.planner && f.detail_report ? f.detail_report : f.report).map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
-    return `<div class="ol"><span class="ol-l">${esc(r.label.replace("5-Day ", "5-Day "))}</span><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span><span class="ol-p">ERC ${p == null ? "—" : p + "%"}</span></div>`; }).join("");
+  const outlook = rowsOf(f).map(r => { const d = fdOf(r.values), p = (r.values || {}).erc_pct;
+    return `<div class="ol"><span class="ol-l">${esc(r.label)}</span><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span><span class="ol-p">${esc(label("erc"))} ${p == null ? "—" : p + "%"}</span></div>`; }).join("");
   const hist = `<div id="histCmp" class="muted" style="font-size:12.5px">Loading…</div>`;
-  return `<h4>FDRA Percentiles · ${esc(dayLabel(panelDay === "obs" ? META.latest_obs_date : META.today))}</h4><div class="pbars">${bars}</div>
-    <div class="footnote">Percentiles against this FDRA's ${esc(f.analysis_period || "")} history. 100HR, 1000HR and GSI are shown as dryness percentiles.</div>
+  return `<h4>FDRA Percentiles · ${esc(mdy(panelDay === "obs" ? META.latest_obs_date : META.today))}</h4><div class="pbars">${bars}</div>
+    <div class="footnote">Percentiles against this FDRA's ${esc(yearsOf(f))} record.${W ? ` ${esc(label("erc"))}${P.bi ? " and " + esc(label("bi")) : ""} are ${W}-day averages, ranked against ${W}-day averages.` : ""}${P ? ` ${esc(label("erc"))}${P.bi ? " and " + esc(label("bi")) : ""} colors follow this FDRA's adopted thresholds.` : ""} 100HR, 1000HR and GSI percentiles indicate dryness.</div>
     <h4>Outlook</h4><div class="olrow">${outlook}</div>
     <h4>Compared with History</h4>${hist}`;
 }
@@ -1099,7 +1108,7 @@ async function fillHistory(f) {
   const iso = panelDay === "obs" ? META.latest_obs_date : META.today;
   const dt = new Date(iso + "T12:00:00"), doy = Math.round((dt - new Date(dt.getFullYear(), 0, 0)) / 864e5) - ((dt.getFullYear() % 4 === 0 && dt.getMonth() > 1) ? 1 : 0);
   const c = d && d.climo ? d.climo.find(x => x.doy === doy) : null;
-  const v = periodVals(f);
+  const v = dayVals(f);
   if (!$("#histCmp")) return;
   if (!c) { $("#histCmp").textContent = "Historical comparison is not available for this FDRA."; return; }
   const row = (lbl, val, avg, max) => `<tr><td>${lbl}</td><td><b>${fmtNum(val)}</b></td><td>${fmtNum(avg)}</td><td>${fmtNum(max)}</td><td>${val == null || avg == null ? "—" : (val >= avg ? "+" : "") + fmtNum(val - avg) }</td></tr>`;
@@ -1114,7 +1123,7 @@ function openFdraPanel(key) {
   $("#dSub").textContent = `Zone ${zoneLabel(f.zone)}${f.fuel_model ? " · Fuel model " + f.fuel_model : ""} · ${f.sig_raws.length} station${f.sig_raws.length === 1 ? "" : "s"}`;
   const body = () => {
     if (f.noData) return `<div class="nodata"><b>No station data yet for this FDRA.</b><br>Station details will be available once station data is added for this FDRA.</div>`;
-    const v = periodVals(f), fm = f.fuel_model || "Y";
+    const v = dayVals(f), fm = f.fuel_model || "Y";
     let t;
     if (panelTab === "fd") {
       const row = (label, x, avg) => `<tr${avg ? ' class="avg"' : ""}><td>${label}</td><td>${fmtNum(x.erc)}</td><td>${fmtNum(x.bi)}</td><td>${fmtNum(x.fm100, 1)}</td><td>${fmtNum(x.fm1000, 1)}</td><td>${fmtNum(x.kbdi)}</td></tr>`;
@@ -1129,16 +1138,16 @@ function openFdraPanel(key) {
         ${row("<b>FDRA average</b>", v, true)}</tbody></table>
         <div class="footnote">Temperature °F, RH %, wind and gust mph (daily maximum), precipitation in, VPD Pa.</div>`;
     }
-    return daySwitch() + t;
+    return daySwitch(f) + t;
   };
-  const head = `<div class="ph-row"><span class="muted">${(ratings[f.key] && classByName(ratings[f.key].rating)) ? "Official rating" : "Calculated rating today"}</span>${ratingBadge(f)}</div>`;
+  const head = `<div class="ph-row"><span class="muted">${(ratings[f.key] && classByName(ratings[f.key].rating)) ? "Official rating" : "Today · Forecast"}</span>${ratingBadge(f)}</div>`;
   const stationsBlock = `<h4>FDRA Stations</h4>${f.sig_raws.length ? stationChips(f.sig_raws) : '<div class="muted">No stations assigned yet.</div>'}
     <h4>Station Summary</h4>${panelTabs()}<div id="dPane">${body()}</div>`;
   if (PANEL_LAYOUT === "tabs" && !f.noData) {
     $("#dBody").innerHTML = head + `<div class="dtabs big" role="tablist"><button role="tab" data-fview="summary" aria-selected="${fdraView === "summary"}">FDRA Summary</button><button role="tab" data-fview="stations" aria-selected="${fdraView === "stations"}">Stations</button></div>`
-      + daySwitch() + (fdraView === "summary" ? fdraSummary(f) : stationsBlock.replace(daySwitch(), ""));
+      + daySwitch(f) + (fdraView === "summary" ? fdraSummary(f) : stationsBlock.replace(daySwitch(f), ""));
   } else {
-    $("#dBody").innerHTML = head + (f.noData ? "" : daySwitch() + fdraSummary(f)) + stationsBlock.replace(daySwitch(), "");
+    $("#dBody").innerHTML = head + (f.noData ? "" : daySwitch(f) + fdraSummary(f)) + stationsBlock.replace(daySwitch(f), "");
   }
   fillHistory(f);
   wirePanel(() => openFdraPanel(key));
@@ -1155,21 +1164,29 @@ function openZonePanel(z) {
     const withData = list.filter(f => !f.noData);
     if (!withData.length) return `<div class="nodata"><b>No station data yet for this zone.</b><br>Zone details will be available once station data is added for its FDRAs.</div>`;
     let t;
+    const zr = zoneReport(z), zv = periodRow(null, zr.report).values || {};   // zone average, same as the zone page
+    const badge = c => `<span class="badge sm" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "—"}</span>`;
     if (panelTab === "fd") {
       t = `<table class="mini"><thead><tr><th>FDRA</th><th>ERC</th><th>BI</th><th>SFDI</th><th>VPD</th><th>Rating</th></tr></thead><tbody>
         ${list.map(f => { const v = f.noData ? {} : periodVals(f), d = fdOf(f.noData ? null : v);
           return `<tr><td><button class="lnk" data-pfdra="${esc(f.key)}">${esc(f.name)}</button></td><td>${fmtNum(v.erc)}</td><td>${fmtNum(v.bi)}</td><td>${fmtNum(v.sfdi)}</td><td>${fmtNum(v.vpd)}</td>
-            <td><span class="badge sm" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "—"}</span></td></tr>`; }).join("")}</tbody></table>
-        <div class="footnote">FDRA averages. Rating is the calculated fire danger for the selected day.</div>`;
+            <td>${badge(d.cls)}</td></tr>`; }).join("")}
+        <tr class="avg"><td><b>Zone average</b></td><td>${fmtNum(zv.erc)}</td><td>${fmtNum(zv.bi)}</td><td>${fmtNum(zv.sfdi)}</td><td>${fmtNum(zv.vpd)}</td><td>${badge(fdOf(zv).cls)}</td></tr></tbody></table>
+        <div class="footnote">Values and rating for the selected day; FDRAs rated on multi-day averages show those averages. Zone rating is the average of the FDRA ratings.</div>`;
     } else {
       t = `<table class="mini"><thead><tr><th>FDRA</th><th>Max T</th><th>Min RH</th><th>Wind</th><th>Gust</th><th>Precip</th></tr></thead><tbody>
-        ${list.map(f => { const v = f.noData ? {} : periodVals(f);
-          return `<tr><td><button class="lnk" data-pfdra="${esc(f.key)}">${esc(f.name)}</button></td><td>${fmtNum(v.tmax)}</td><td>${fmtNum(v.rhmin)}</td><td>${fmtNum(v.wind)}</td><td>${fmtNum(v.gust)}</td><td>${fmtNum(v.precip, 2)}</td></tr>`; }).join("")}</tbody></table>
+        ${list.map(f => { const v = f.noData ? {} : dayVals(f);
+          return `<tr><td><button class="lnk" data-pfdra="${esc(f.key)}">${esc(f.name)}</button></td><td>${fmtNum(v.tmax)}</td><td>${fmtNum(v.rhmin)}</td><td>${fmtNum(v.wind)}</td><td>${fmtNum(v.gust)}</td><td>${fmtNum(v.precip, 2)}</td></tr>`; }).join("")}
+        <tr class="avg"><td><b>Zone average</b></td><td>${fmtNum(zv.tmax)}</td><td>${fmtNum(zv.rhmin)}</td><td>${fmtNum(zv.wind)}</td><td>${fmtNum(zv.gust)}</td><td>${fmtNum(zv.precip, 2)}</td></tr></tbody></table>
         <div class="footnote">FDRA averages. Temperature °F, RH %, wind and gust mph (daily maximum), precipitation in.</div>`;
     }
     return daySwitch() + t;
   };
-  $("#dBody").innerHTML = `<div class="ph-row"><span class="muted">Highest FDRA rating today</span><span class="badge sm" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
+  const zr = list.some(f => !f.noData) ? zoneReport(z) : null;
+  const outlook = zr ? zr.report.map(r => { const c = fdOf(r.values).cls;
+    return `<div class="ol"><span class="ol-l">${esc(r.label)}</span><span class="badge sm" style="background:${c ? c.color : "var(--surface-2)"}">${c ? esc(c.name) : "—"}</span></div>`; }).join("") : "";
+  $("#dBody").innerHTML = `<div class="ph-row"><span class="muted" title="Average of the FDRA ratings">Zone today · Forecast</span><span class="badge sm" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
+    ${zr ? `<h4>Zone Outlook</h4><div class="olrow">${outlook}</div>` : ""}
     <h4>FDRAs</h4><div class="fst-l">${list.map(f => `<button class="stn" data-pfdra="${esc(f.key)}">${ratingBadge(f)}${esc(f.name)}</button>`).join("")}</div>
     <h4>Zone Stations</h4>${ids.length ? stationChips(ids) : '<div class="muted">No stations assigned yet.</div>'}
     ${panelTabs()}<div id="dPane">${body()}</div>`;
