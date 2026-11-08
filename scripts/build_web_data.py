@@ -587,6 +587,15 @@ def main():
                  ("7-Day Forecast", fc, fwx, ([today] if today else []) + future[:6])]      # today + next 6 days
         detail_report = [{"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                           "values": day_values(nf, wx, days) if days else None} for label, nf, wx, days in rows]
+        # Day-by-day strip (every FDRA): each of the last 7 observed days and the 7 forecast days on its own
+        daily = []
+        for nf, wx, days in ((nfdr, wxd, obs_days[-7:]), (fc, fwx, ([today] if today else []) + future[:6])):
+            for d in days:
+                v = day_values(nf, wx, [d]) or {}
+                raw = roll_day.get(d, (None, None))   # unrounded day values (one decimal) so the averages can be checked
+                daily.append({"d": d, "type": "O" if nf is nfdr else "F",
+                              **{k: v.get(k) for k in ("erc", "bi", "sfdi", "vpd", "erc_avg", "bi_avg", "erc_cls", "bi_cls", "fd")},
+                              **({"erc": rnd(raw[0], 1), "bi": rnd(raw[1], 1)} if raw[0] is not None else {})})
         if pm:
             if pm.get("window", 1) > 1:
                 # Averaged methods: ERC and BI in the FDRA table are the N-day averages that set the rating,
@@ -601,22 +610,13 @@ def main():
                         v_[k + "_pct"] = p_
                         tops = pm_tops[k]
                         v_[k + "_pcls"] = None if p_ is None or None in tops else v_[k + "_cls"] if p_ in tops else sum(p_ > t for t in tops)
-            # Day-by-day strip: each of the last 7 observed days and the 7 forecast days on its own
-            daily = []
-            for nf, wx, days in ((nfdr, wxd, obs_days[-7:]), (fc, fwx, ([today] if today else []) + future[:6])):
-                for d in days:
-                    v = day_values(nf, wx, [d]) or {}
-                    raw = roll_day.get(d, (None, None))   # unrounded day values (one decimal) so the averages can be checked
-                    daily.append({"d": d, "type": "O" if nf is nfdr else "F",
-                                  **{k: v.get(k) for k in ("erc", "bi", "erc_avg", "bi_avg", "erc_cls", "bi_cls", "fd")},
-                                  **({"erc": rnd(raw[0], 1), "bi": rnd(raw[1], 1)} if raw[0] is not None else {})})
             # percentile range of each class; None when no percentile step falls in that class
             ranges = lambda tops: [(lambda lo, hi: [lo, hi] if lo <= hi else None)(1 if i == 0 else tops[i - 1] + 1, tops[i] if i < len(tops) else 100)
                                    for i in range(len(tops) + 1)]
             if any(None in pm_tops[k] for k in pm_ix):
                 print(f"WARNING: {key} has no percentile history; percentile colors left blank")
             planner = {"label": f"ERC-{fm} × BI-{fm}" if "grid" in pm else f"ERC-{fm}", "erc": pm["erc"], "bi": pm.get("bi"), "grid": pm.get("grid"),
-                       "daily": daily, "window": pm.get("window", 1),
+                       "window": pm.get("window", 1),
                        "pct_ranges": {k: ranges(pm_tops[k]) if None not in pm_tops[k] else None for k in pm_ix}}
 
         breakpoints = []
@@ -630,7 +630,7 @@ def main():
 
         item = {
             "report": report, "breakpoints": breakpoints,
-            "detail_report": detail_report, **({"planner": planner} if pm else {}),
+            "detail_report": detail_report, "daily": daily, **({"planner": planner} if pm else {}),
             "key": key, "slug": slug(key), "name": r["FDRA"].strip(), "zone": r["Zone"].strip(),
             "fdra_id": r["FDRA_ID"], "fuel_model": fm, "sig_raws": sig,
             "mfd": r.get("MFD_Thresh"), "lfd": r.get("LFD_Threshold"),
