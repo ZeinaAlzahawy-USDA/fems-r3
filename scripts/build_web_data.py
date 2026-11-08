@@ -200,6 +200,12 @@ PLANNER_METHODS = {
     },
 }
 
+# Station map markers: every station is colored by its ERC-Y percentile (latest observed day) and shows
+# the trend over the most recent 3 days: Increase / Decrease when ERC-Y changed by TREND_STEP or more.
+STATION_FM = "Y"
+TREND_DAYS = 3
+TREND_STEP = 2
+
 # Daily report columns: (key, label, group, has_percentile)
 REPORT_COLS = [
     ("erc", "ERC", "Fuels", True), ("bi", "BI", "Fuels", True),
@@ -388,7 +394,7 @@ def main():
     # 2005-2024 daily station ERC/BI (fdra-climo release): used for the percentiles of averaged methods (7-day average)
     hist_daily_path = P("history_2005_2024_daily_erc_bi.csv")
     hist_daily = None
-    if any(m.get("window", 1) > 1 for m in PLANNER_METHODS.values()) and os.path.exists(hist_daily_path):
+    if os.path.exists(hist_daily_path):   # also used for the station map colors (ERC-Y percentile of every station)
         hist_daily = pd.read_csv(hist_daily_path, dtype={"sid": str})
         hist_daily["sid"] = hist_daily["sid"].map(norm_id)
     climo_path = P("r3_fdra_daily_climo.csv")   # optional: from the one-time 2005-2024 history pull
@@ -683,6 +689,23 @@ def main():
                    {"id": sid, "nfdr": by_fm, "forecast": fc_fm, "wx_daily": wx_daily, "wx_forecast": wx_fc, "wx_hourly": wx_hourly})
 
         last_wx = wx_hourly[-1] if wx_hourly else None
+        # Station map marker: latest observed ERC-Y, its percentile against the station's own 2005-2024
+        # ERC-Y record, and the trend over the most recent 3 days (latest day vs two days before it).
+        st_map = None
+        yrows = by_fm.get(STATION_FM) or []
+        if yrows and yrows[-1].get("erc") is not None:
+            d0, e0 = yrows[-1]["d"], yrows[-1]["erc"]
+            pct = None
+            if hist_daily is not None:
+                hs = hist_daily[(hist_daily["sid"] == sid) & (hist_daily["fuel_model"] == STATION_FM)]["erc"].dropna()
+                if len(hs) >= 365:
+                    thr = sorted(zip(np.round(np.percentile(hs, range(1, 101)), 2), range(1, 101)))
+                    pct = percentile_for(e0, thr)
+            by_d = {r["d"]: r.get("erc") for r in yrows}
+            d_prev = (datetime.strptime(d0, "%Y-%m-%d") - timedelta(days=TREND_DAYS - 1)).strftime("%Y-%m-%d")
+            e_prev = by_d.get(d_prev)
+            trend = None if e_prev is None else "up" if e0 - e_prev >= TREND_STEP else "down" if e_prev - e0 >= TREND_STEP else "flat"
+            st_map = {"d": d0, "erc": e0, "pct": pct, "trend": trend, "d_prev": d_prev if e_prev is not None else None, "erc_prev": e_prev}
         # one-line summaries for the zone / FDRA popups: latest observed day and today's forecast
         pick = lambda r: {k: r.get(k) for k in ("d", "tmax", "tmin", "rhmin", "wind", "gust", "precip", "vpdmax")} if r else None
         nf = lambda r: {k: r.get(k) for k in ("d", "erc", "bi", "fm100", "fm1000", "kbdi")} if r else None
@@ -698,6 +721,7 @@ def main():
             "wx_obs": pick(wx_daily[-1] if wx_daily else None),
             "wx_today": pick(next((x for x in wx_fc if x["d"] == today), None)),
             "fc_today": {fm: v for fm, v in today_fc.items() if v},
+            "map": st_map,
         })
 
     if avg_pct_rows:   # downloadable: the exact N-day average percentile tables the site used

@@ -16,6 +16,8 @@ Outputs:
       1/10/100/1000-hr FM, woody/herb FM, KBDI, GSI, IC, ERC, SC, BI (same method as the original file:
       days on which every FDRA station reported, averaged, linear percentiles, 2 decimals)
 Raw station data is also saved: data/history_2005_2024_daily_erc_bi.csv
+  (fuel model Y for every station in stations_az.csv / stations_nm.csv, used for the station map colors,
+   plus each FDRA's own fuel model for its stations)
 
 Uses the same FEMS endpoint and secrets as the existing pipeline. Does not change any other file.
 Run it from GitHub Actions: "FDRA History 2005-2024 (one time)".
@@ -169,9 +171,19 @@ def main():
     fdra["sig"] = fdra["SIG_RAWS"].map(lambda s: [norm_id(x) for x in str(s).split(",") if x.strip()])
     fdra["fm"] = fdra["FM_Long"].fillna("Y").str.strip().replace("", "Y")
 
+    # Station map colors use ERC-Y percentiles for every station (FDRA and non-FDRA), so fuel model Y
+    # is pulled for all stations in stations_az.csv / stations_nm.csv as well.
+    all_listed = set()
+    for name in ("stations_az.csv", "stations_nm.csv"):
+        path = os.path.join(DATA_DIR, name)
+        if os.path.exists(path):
+            all_listed |= {norm_id(x) for x in pd.read_csv(path, header=None, dtype=str)[0].dropna() if str(x).strip()}
+    by_fm = {fm: {s for lst in group["sig"] for s in lst} for fm, group in fdra.groupby("fm")}
+    by_fm["Y"] = by_fm.get("Y", set()) | all_listed
+
     rows = []
-    for fm, group in fdra.groupby("fm"):
-        stations = sorted({s for lst in group["sig"] for s in lst})
+    for fm, stations in sorted(by_fm.items()):
+        stations = sorted(stations)
         print(f"Fuel model {fm}: {len(stations)} stations")
         for year in range(START_YEAR, END_YEAR + 1):
             data = gql({"startDate": f"{year}-01-01", "endDate": f"{year}-12-31",
