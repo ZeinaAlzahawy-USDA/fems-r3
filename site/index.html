@@ -561,7 +561,7 @@ const STATE_GROUPS = [["Arizona", ["FDZ", "PIFC", "SEZ", "WAZ", "WDZ", "WMZ"]], 
 function renderTabs() {
   const all = worstOf(META.fdras);
   $("#zoneTabs").innerHTML = `<button class="ztab ov" role="tab" data-overview="1" aria-selected="${!state.zone}">
-      <span class="dot" style="background:${all ? all.color : "transparent"}"></span>Southwest overview</button>` +
+      <span class="dot" style="background:${all ? all.color : "transparent"}"></span>Southwest Overview</button>` +
     ZONES().map(z => {
       const w = zoneDanger(z), sel = z === state.zone;
       const sub = sel ? (state.fdra ? FDRA[state.fdra].name : "Whole zone") : `${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"}`;
@@ -811,9 +811,10 @@ function outlookTable(list, {groupByZone = false, zoneRow = null, zones = null, 
     return `<td class="oc" style="background:${c ? c.color : "transparent"}">${c ? `<b>${esc(c.name)}</b>${d.pct != null ? ` <small>${d.pct}%</small>` : ""}` : "—"}</td>`;
   };
   const md = iso => { const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };
-  const sub = r => detail ? (r.days.length === 1 ? md(r.days[0]) : r.days.length ? md(r.days[0]) + " → " + md(r.days[r.days.length - 1]) : "")
-    : r.days.length === 1 ? dayLabel(r.days[0]) : r.days.length + " days";
-  const head = first.map(r => `<th>${esc(r.label.replace("Average ", "Avg "))}<span>${esc(sub(r))}</span></th>`).join("");
+  // date range on two lines so the 7-day columns stay narrow
+  const sub = r => detail ? (r.days.length === 1 ? esc(md(r.days[0])) : r.days.length ? esc(md(r.days[0])) + " →<br>" + esc(md(r.days[r.days.length - 1])) : "")
+    : esc(r.days.length === 1 ? dayLabel(r.days[0]) : r.days.length + " days");
+  const head = first.map(r => `<th>${esc(r.label.replace("Average ", "Avg "))}<span>${sub(r)}</span></th>`).join("");
   const row = (f, isZone) => {
     const d = currentDanger(f);
     const off = ratings[f.key] && classByName(ratings[f.key].rating);
@@ -846,7 +847,7 @@ function stateBlocks() {
     return `<section class="state-block"><header class="state-head">
         <div><h3>${esc(state)}</h3><span>${zones.length} zone${zones.length === 1 ? "" : "s"} · ${fdras.length} FDRAs · ${esc(zones.join(" · "))}</span></div>
         <div class="state-badge"><small>Highest FDRA</small><span class="badge" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
-      </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false})}</section>`;
+      </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false, detail: true})}</section>`;
   }).join("");
   return out + `<div class="footnote">${methodNote(META.fdras)} Select a row for details.</div>`;
 }
