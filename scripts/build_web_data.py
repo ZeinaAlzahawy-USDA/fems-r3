@@ -101,7 +101,7 @@ EXTRA_INDICES = {"sfdi": "SFDI", "vpd": "VPD", "hdwi": "HDWI"}
 # sheet (AdjectiveRating tab). Each number is the top of its class; the last class is anything above the
 # fourth number. "grid": rows = BI class, columns = ERC class (0=Low 1=Moderate 2=High 3=Very High 4=Extreme).
 # The fuel model is the FDRA's own (FM_Long in r3_fdra.csv). FDRAs not listed keep the VPD x SFDI method.
-ABZ_GRID = [[0, 0, 0, 1, 1],   # same matrix for these ABZ FDRAs
+ABZ_GRID = [[0, 0, 0, 1, 1],   # same matrix for the ABZ and WAZ FDRAs below
             [0, 1, 1, 1, 2],
             [1, 1, 2, 2, 3],
             [1, 2, 3, 3, 4],
@@ -132,6 +132,22 @@ PLANNER_METHODS = {
         "erc": [39, 49, 59, 63],
         "bi": [28, 36, 45, 48],
         "grid": ABZ_GRID,
+    },
+    # WAZ: rated on the 7-day average of ERC-Y and BI-Y ("window": 7 = average of the 7 days ending on each day)
+    "WAZ Forested": {
+        "erc": [23, 35, 51, 65],
+        "bi": [12, 23, 31, 39],
+        "grid": ABZ_GRID, "window": 7,
+    },
+    "WAZ Brush": {
+        "erc": [23, 35, 51, 65],
+        "bi": [14, 21, 31, 40],
+        "grid": ABZ_GRID, "window": 7,
+    },
+    "WAZ Transition": {
+        "erc": [23, 35, 51, 65],
+        "bi": [14, 26, 38, 47],
+        "grid": ABZ_GRID, "window": 7,
     },
     "PEZ Guadalupe Mountains": {
         "erc": [39.9, 47.9, 54.9, 61.9],
@@ -330,6 +346,12 @@ def main():
     hist = pd.read_csv(P("r3_fdra_percentile_historical.csv"))
     extra_path = P(EXTRA_PCT_FILE)
     extra = pd.read_csv(extra_path) if os.path.exists(extra_path) else None
+    # 2005-2024 daily station ERC/BI (fdra-climo release): used for the percentiles of averaged methods (7-day average)
+    hist_daily_path = P("history_2005_2024_daily_erc_bi.csv")
+    hist_daily = None
+    if any(m.get("window", 1) > 1 for m in PLANNER_METHODS.values()) and os.path.exists(hist_daily_path):
+        hist_daily = pd.read_csv(hist_daily_path, dtype={"sid": str})
+        hist_daily["sid"] = hist_daily["sid"].map(norm_id)
     climo_path = P("r3_fdra_daily_climo.csv")   # optional: from the one-time 2005-2024 history pull
     climo = pd.read_csv(climo_path) if os.path.exists(climo_path) else None
     fdra_obs_path = P("obs_nfdr_daily_fdra.csv")
@@ -360,7 +382,26 @@ def main():
 
         pm = PLANNER_METHODS.get(key)
         # the planner's numbers as percentile steps of this FDRA's history (highest step at or below each number)
-        pm_tops = {k: [percentile_for(t, thresholds[k]) for t in pm[k]] for k in ("erc", "bi")} if pm else None
+        # Averaged methods: percentiles of the N-day average, from 2005-2024 N-day averages of this FDRA
+        # (same rule as the daily percentile file: days on which every FDRA station reported, then linear percentiles 1-100)
+        avg_thr = None
+        if pm and pm.get("window", 1) > 1:
+            if hist_daily is not None:
+                h_ = hist_daily[(hist_daily["sid"].isin(sig)) & (hist_daily["fuel_model"] == fm)]
+                avg_thr = {}
+                for k in ("erc", "bi"):
+                    s_ = h_.dropna(subset=[k])
+                    n_ = s_.groupby("summary_date")["sid"].nunique()
+                    dly = s_.groupby("summary_date")[k].mean()[n_[n_ == len(sig)].index]
+                    dly.index = pd.to_datetime(dly.index)
+                    dly = dly.asfreq("D")                                   # missing days break the window
+                    rolled = dly.rolling(pm["window"], min_periods=pm["window"]).mean().dropna()
+                    avg_thr[k] = sorted(zip(np.round(np.percentile(rolled, range(1, 101)), 2), range(1, 101))) if len(rolled) else []
+                print(f"  {key}: {pm['window']}-day average percentiles from {len(rolled)} windows")
+            else:
+                print(f"WARNING: {hist_daily_path} not found; {key} {pm['window']}-day average percentiles left blank")
+        pm_thr = avg_thr if (pm and pm.get("window", 1) > 1) else thresholds
+        pm_tops = {k: [percentile_for(t, (pm_thr or {}).get(k)) for t in pm[k]] for k in ("erc", "bi")} if pm else None
 
         # FDRA daily averages from station data (season + forecast)
         def daily_avg(df, kind):
@@ -432,6 +473,9 @@ def main():
             res["fd"], res["fd_method"] = fire_danger_class(res)
             if pm:
                 # Planner method: ERC class and BI class (from the values) meet in the planner's matrix
+                avg = roll.get(sorted(days)[-1]) if roll else None   # averaged methods: average ending on the row's last day
+                if avg:
+                    res["erc_avg"], res["bi_avg"] = rnd(avg[0], 1), rnd(avg[1], 1)
                 for k in ("erc", "bi"):
                     vc = planner_class(out.get(k), pm[k])
                     res[k + "_cls"] = vc
@@ -440,11 +484,29 @@ def main():
                     # A percentile step that holds values on both sides of a planner number uses the value's class.
                     res[k + "_pcls"] = None if p is None or None in pm_tops[k] else vc if p in pm_tops[k] else sum(p > t for t in pm_tops[k])
                 ec, bc = res["erc_cls"], res["bi_cls"]
+                if avg:   # the rating classes come from the averages
+                    ec, bc = planner_class(avg[0], pm["erc"]), planner_class(avg[1], pm["bi"])
+                    res["erc_cls"], res["bi_cls"] = ec, bc
                 res["fd"], res["fd_method"] = (pm["grid"][bc][ec], "planner") if ec is not None and bc is not None else (None, None)
             return res
 
         obs_days = sorted(nfdr["summary_date"].unique())
         future = [d for d in fc_days if today and d > today]
+        roll, roll_day = {}, {}
+        if pm and pm.get("window", 1) > 1:
+            # Daily FDRA averages: observed days up to yesterday, then forecast days from today.
+            # Each day's rating uses the average of the `window` days ending on that day.
+            def fdra_day(df, d):
+                s_ = df[(df["sid"].isin(sig)) & (df["fuel_model"] == fm) & (df["summary_date"] == d)]
+                return (pd.to_numeric(s_["Max ERC"], errors="coerce").mean(), pd.to_numeric(s_["Max BI"], errors="coerce").mean())
+            seq = [(d, *fdra_day(nfdr, d)) for d in obs_days[-(pm["window"] + 1):]]
+            seq += [(d, *fdra_day(fc, d)) for d in ([today] if today else []) + future]
+            roll_day.update({d: (e, b) for d, e, b in seq})
+            for i, (d, _, _) in enumerate(seq):
+                win = seq[max(0, i - pm["window"] + 1): i + 1]
+                e = [x[1] for x in win if pd.notna(x[1])]
+                b = [x[2] for x in win if pd.notna(x[2])]
+                roll[d] = (float(np.mean(e)) if e else None, float(np.mean(b)) if b else None)
         report = []
         for label, nf, wx, days in [
             ("Yesterday", nfdr, wxd, obs_days[-1:]),
@@ -468,19 +530,34 @@ def main():
                      ("7-Day Forecast", fc, fwx, ([today] if today else []) + future[:6])]      # today + next 6 days
             detail_report = [{"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                               "values": day_values(nf, wx, days) if days else None} for label, nf, wx, days in rows]
+            if pm.get("window", 1) > 1:
+                # Averaged methods: ERC and BI in the FDRA table are the N-day averages that set the rating,
+                # with their percentiles against 2005-2024 N-day averages
+                for r_ in detail_report:
+                    v_ = r_["values"]
+                    if not v_ or v_.get("erc_avg") is None:
+                        continue
+                    for k in ("erc", "bi"):
+                        v_[k] = v_[k + "_avg"]
+                        p_ = percentile_for(v_[k], avg_thr.get(k)) if avg_thr else None
+                        v_[k + "_pct"] = p_
+                        tops = pm_tops[k]
+                        v_[k + "_pcls"] = None if p_ is None or None in tops else v_[k + "_cls"] if p_ in tops else sum(p_ > t for t in tops)
             # Day-by-day strip: each of the last 7 observed days and the 7 forecast days on its own
             daily = []
             for nf, wx, days in ((nfdr, wxd, obs_days[-7:]), (fc, fwx, ([today] if today else []) + future[:6])):
                 for d in days:
                     v = day_values(nf, wx, [d]) or {}
+                    raw = roll_day.get(d, (None, None))   # unrounded day values (one decimal) so the averages can be checked
                     daily.append({"d": d, "type": "O" if nf is nfdr else "F",
-                                  **{k: v.get(k) for k in ("erc", "bi", "erc_cls", "bi_cls", "fd")}})
+                                  **{k: v.get(k) for k in ("erc", "bi", "erc_avg", "bi_avg", "erc_cls", "bi_cls", "fd")},
+                                  **({"erc": rnd(raw[0], 1), "bi": rnd(raw[1], 1)} if raw[0] is not None else {})})
             # percentile range of each class; None when no percentile step falls in that class
             ranges = lambda tops: [(lambda lo, hi: [lo, hi] if lo <= hi else None)(1 if i == 0 else tops[i - 1] + 1, tops[i] if i < len(tops) else 100)
                                    for i in range(len(tops) + 1)]
             if any(None in pm_tops[k] for k in ("erc", "bi")):
                 print(f"WARNING: {key} has no percentile history; percentile colors left blank")
-            planner = {"label": f"ERC-{fm} × BI-{fm}", "erc": pm["erc"], "bi": pm["bi"], "grid": pm["grid"], "daily": daily,
+            planner = {"label": f"ERC-{fm} × BI-{fm}", "erc": pm["erc"], "bi": pm["bi"], "grid": pm["grid"], "daily": daily, "window": pm.get("window", 1),
                        "pct_ranges": {k: ranges(pm_tops[k]) if None not in pm_tops[k] else None for k in ("erc", "bi")}}
 
         breakpoints = []
