@@ -628,14 +628,16 @@ function reportTable(f) {
   rows.forEach((r, ri) => {
     const v = r.values || {};
     const days = r.days || [];
-    const sub = days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
+    const md = iso => { const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };   // 11/6/2026
+    const sub = P ? (days.length === 1 ? md(days[0]) : days.length ? md(days[0]) + " → " + md(days[days.length - 1]) : "No data")
+      : days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
     const fdv = fdOf(r.values), dcls = fdv.cls;
     const start = ri === (P ? rows.length - 2 : 3) ? " block-start" : "";
     h += `<tr class="${start}"><th class="period" rowspan="2"><b>${esc(r.label)}</b><span>${esc(sub)}</span><em>${r.type === "F" ? "Forecast" : "Observed"}</em></th>
       <td class="kind">Value</td>
       ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" ? `ERC-${fm} class ${v.erc_cls + 1} × BI-${fm} class ${v.bi_cls + 1}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? `<br><small style='font-weight:500'>ERC class ${v.erc_cls + 1} · BI class ${v.bi_cls + 1}</small>` : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" ? `ERC-${fm} class ${v.erc_cls + 1} × BI-${fm} class ${v.bi_cls + 1}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
