@@ -359,6 +359,7 @@ def main():
 
     station_fdras = {}
     fdra_list = []
+    avg_pct_rows = []   # N-day average percentile tables, saved as a CSV with the website data
     for _, r in fdra.iterrows():
         key = r["FDRA_ZONE"].strip()
         sig = [norm_id(s) for s in str(r["SIG_RAWS"]).split(",") if s.strip()]
@@ -398,6 +399,12 @@ def main():
                     rolled = dly.rolling(pm["window"], min_periods=pm["window"]).mean().dropna()
                     avg_thr[k] = sorted(zip(np.round(np.percentile(rolled, range(1, 101)), 2), range(1, 101))) if len(rolled) else []
                 print(f"  {key}: {pm['window']}-day average percentiles from {len(rolled)} windows")
+                period = f"1/1/{hist_daily['summary_date'].min()[:4]} - 12/31/{hist_daily['summary_date'].max()[:4]}"
+                for i in range(100):
+                    avg_pct_rows.append({"FDRA_ZONE": key, "FM": fm, "Window_Days": pm["window"], "SIG_RAWS": ", ".join(sig),
+                                         "Analysis_Period": period, "Percentiles": i + 1,
+                                         "AvgERC": avg_thr["erc"][i][0] if avg_thr["erc"] else None,
+                                         "AvgBI": avg_thr["bi"][i][0] if avg_thr["bi"] else None})
             else:
                 print(f"WARNING: {hist_daily_path} not found; {key} {pm['window']}-day average percentiles left blank")
         pm_thr = avg_thr if (pm and pm.get("window", 1) > 1) else thresholds
@@ -641,6 +648,8 @@ def main():
             "fc_today": {fm: v for fm, v in today_fc.items() if v},
         })
 
+    if avg_pct_rows:   # downloadable: the exact N-day average percentile tables the site used
+        pd.DataFrame(avg_pct_rows).to_csv(os.path.join(OUT_DIR, "r3_fdra_percentile_7day.csv"), index=False)
     write_json(os.path.join(OUT_DIR, "meta.json"), {
         "generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "latest_obs_date": latest_obs_date,
