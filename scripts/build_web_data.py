@@ -101,15 +101,32 @@ EXTRA_INDICES = {"sfdi": "SFDI", "vpd": "VPD", "hdwi": "HDWI"}
 # sheet (AdjectiveRating tab). Each number is the top of its class; the last class is anything above the
 # fourth number. "grid": rows = BI class, columns = ERC class (0=Low 1=Moderate 2=High 3=Very High 4=Extreme).
 # The fuel model is the FDRA's own (FM_Long in r3_fdra.csv). FDRAs not listed keep the VPD x SFDI method.
+ABZ_GRID = [[0, 0, 0, 1, 1],   # same matrix for these ABZ FDRAs
+            [0, 1, 1, 1, 2],
+            [1, 1, 2, 2, 3],
+            [1, 2, 3, 3, 4],
+            [2, 3, 3, 4, 4]]
 PLANNER_METHODS = {
     "ABZ Mt Taylor & Zuni": {
         "erc": [41, 51, 59, 62],
         "bi": [27, 34, 39, 42],
-        "grid": [[0, 0, 0, 1, 1],
-                 [0, 1, 1, 1, 2],
-                 [1, 1, 2, 2, 3],
-                 [1, 2, 3, 3, 4],
-                 [2, 3, 3, 4, 4]],
+        "grid": ABZ_GRID,
+    },
+    "ABZ Magdalena & San Mateo": {
+        "erc": [38, 50, 60, 66],
+        "bi": [29, 37, 43, 47],
+        "grid": ABZ_GRID,
+    },
+    "ABZ Sandia & Manzano": {
+        # the sheet writes the last classes as ">=59" and ">=46"; 59 and 46 belong to the class before (<=59, <=46)
+        "erc": [37, 50, 55, 59],
+        "bi": [28, 37, 43, 46],
+        "grid": ABZ_GRID,
+    },
+    "ABZ Western Woodlands": {
+        "erc": [39, 49, 59, 63],
+        "bi": [28, 36, 45, 48],
+        "grid": ABZ_GRID,
     },
 }
 
