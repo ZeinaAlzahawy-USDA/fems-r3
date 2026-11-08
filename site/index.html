@@ -151,6 +151,9 @@ table.rep td.fd{font-weight:700;color:var(--cls-ink);min-width:96px}
 table.rep tr.block-start th, table.rep tr.block-start td{border-top:2px solid var(--line-strong)}
 table.rep td.na{color:var(--ink-3)}
 table.rep td.pct.pg{color:var(--ink-3)}
+table.rep.daily th span{display:block;font-weight:500;font-size:11.5px;color:var(--ink-3)}
+table.rep.daily th.rl{text-align:left;padding-left:12px;white-space:nowrap}
+table.rep.daily td.fd{font-size:12.5px;min-width:0}
 
 .under{margin-top:16px}
 .bp h3{font-size:14px;margin:0 0 6px}
@@ -647,6 +650,27 @@ function reportTable(f) {
   });
   return h + "</tbody></table></div>";
 }
+// Day-by-day table under the main table: each observed and forecast day on its own
+function dailyTable(f) {
+  const D = (f.planner || {}).daily || [], fm = f.fuel_model || "Y";
+  if (!D.length) return "";
+  const obs = D.filter(x => x.type === "O"), fc = D.filter(x => x.type === "F");
+  const md = iso => { const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };
+  const name = (x, i, arr) => x.type === "O" && i === arr.length - 1 ? "Yesterday" : x.type === "F" && i === 0 ? "Today" : x.type === "F" && i === 1 ? "Tomorrow"
+    : new Date(x.d + "T12:00:00").toLocaleDateString("en-US", {weekday: "short"});
+  const head = arr => arr.map((x, i) => `<th class="${i === 0 ? "gsep" : ""}"><b>${esc(name(x, i, arr))}</b><span>${md(x.d)}</span></th>`).join("");
+  const cells = (arr, k) => arr.map((x, i) => `<td class="${i === 0 ? "gsep" : ""}${x[k] == null ? " na" : ""}">${fmtNum(x[k])}</td>`).join("");
+  const fdc = arr => arr.map((x, i) => { const c = x.fd != null ? CLASSES[x.fd] : null;
+    return `<td class="fd${i === 0 ? " gsep" : ""}" style="background:${c ? c.color : "transparent"}">${c ? esc(c.name) : "—"}</td>`; }).join("");
+  return `<h3 class="sub">Day-by-Day Fire Danger · Last 7 Days Observed and Next 7 Days Forecast</h3>
+    <div class="tbl-scroll"><table class="rep daily"><thead>
+      <tr class="grp"><th rowspan="2"></th><th class="gsep" colspan="${obs.length}">Observed</th><th class="gsep" colspan="${fc.length}">Forecast</th></tr>
+      <tr>${head(obs)}${head(fc)}</tr></thead><tbody>
+      <tr><th class="rl">ERC-${esc(fm)}</th>${cells(obs, "erc")}${cells(fc, "erc")}</tr>
+      <tr><th class="rl">BI-${esc(fm)}</th>${cells(obs, "bi")}${cells(fc, "bi")}</tr>
+      <tr><th class="rl">Fire Danger</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
+    <div class="footnote">Each day on its own: that day's ERC-${esc(fm)} and BI-${esc(fm)} (average of the FDRA's stations) in the ${esc(f.planner.label)} matrix.</div>`;
+}
 function plannerBreakpoints(f) {
   const P = f.planner, fm = f.fuel_model || "Y", R = P.pct_ranges || {};
   const pr = (k, i) => R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
@@ -829,7 +853,7 @@ function renderView() {
   el.innerHTML = `<section class="panel"><div class="phead"><h2>${esc(f.name)} FDRA</h2>
       <div class="rating-box">${ratingBox(f)}</div>
       <div class="pmeta">Zone ${esc(zoneLabel(f.zone))} · Reporting stations: ${stationLinks(f.sig_raws)}</div></div>
-      ${legendHtml(f)}${reportTable(f)}<div class="under">${breakpointTable(f)}${matrixTable(f)}${SHOW_RATING_SUMMARY ? ratingSummary(f) : ""}</div></section>
+      ${legendHtml(f)}${reportTable(f)}${f.planner ? dailyTable(f) : ""}<div class="under">${breakpointTable(f)}${matrixTable(f)}${SHOW_RATING_SUMMARY ? ratingSummary(f) : ""}</div></section>
     <section class="panel" id="chartPanel"><div class="phead"><h2>Season charts</h2>
       <div class="rating-box seg" role="group" aria-label="Chart range">
         <button data-range="year" aria-pressed="${chartRange === "year"}">This year</button>
@@ -953,9 +977,16 @@ function svgChart(box, f, d, k) {
     if (!best || bd > 30) { xh.style.display = "none"; tip.hidden = true; return; }
     const x = tx(best.d), c = classForPct(best.p);
     xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.style.display = "";
+    if (f.planner) {   // own method: date, ERC and BI with percentiles, and that day's fire danger from the planner's matrix
+      const P = f.planner, fm = f.fuel_model || "Y", row = (best.f ? d.forecast : d.season || []).find(r => r.d === best.d) || {};
+      const cls = (v, lim) => v == null ? null : (lim.findIndex(t => v <= t) + 1 || lim.length + 1) - 1;
+      const ec = cls(row.erc, P.erc), bc = cls(row.bi, P.bi), fdc = ec != null && bc != null ? CLASSES[P.grid[bc][ec]] : null;
+      const [yy, mm, dd] = best.d.split("-"), line = (lbl, key) => `${lbl} <b>${fmtNum(row[key], 1)}</b>${row[key + "_pct"] != null ? ` (${row[key + "_pct"]}%)` : ""}`;
+      tip.innerHTML = `<b>${+mm}/${+dd}/${yy}</b> · ${best.f ? "Forecast" : "Observed"}<br>${line("ERC-" + fm, "erc")}<br>${line("BI-" + fm, "bi")}<br>Fire Danger${fdc ? ` <span class="tsw" style="background:${fdc.color}"></span><b>${esc(fdc.name)}</b>` : " —"}`;
+    } else
     tip.innerHTML = `<b>${esc(dayLabel(best.d))}</b>${best.f ? " · forecast" : ""}<br>${k.toUpperCase()} ${fmtNum(best.v, 1)} · ${best.p == null ? "—" : best.p + "%"}${c ? ` <span class="tsw" style="background:${c.color}"></span>${esc(c.name)}` : ""}`;
     tip.hidden = false;
-    const tw = tip.offsetWidth; tip.style.left = Math.min(Math.max(0, x - tw / 2), W - tw) + "px"; tip.style.top = Math.max(0, ty(best.v) - 58) + "px";
+    const tw = tip.offsetWidth; tip.style.left = Math.min(Math.max(0, x - tw / 2), W - tw) + "px"; tip.style.top = Math.max(0, ty(best.v) - tip.offsetHeight - 12) + "px";
   };
   svg.addEventListener("mousemove", move); svg.addEventListener("touchstart", move, {passive: true}); svg.addEventListener("touchmove", move, {passive: true});
   svg.addEventListener("mouseleave", () => { xh.style.display = "none"; tip.hidden = true; });
