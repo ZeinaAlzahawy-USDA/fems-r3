@@ -151,6 +151,7 @@ table.rep td.fd{font-weight:700;color:var(--cls-ink);min-width:96px}
 table.rep tr.block-start th, table.rep tr.block-start td{border-top:2px solid var(--line-strong)}
 table.rep td.na{color:var(--ink-3)}
 table.rep td.pct.pg{color:var(--ink-3)}
+small.avgt{font-weight:500;font-size:11px;color:var(--ink-3);white-space:nowrap}
 table.rep.daily th span{display:block;font-weight:500;font-size:11.5px;color:var(--ink-3)}
 table.rep.daily th.rl{text-align:left;padding-left:12px;white-space:nowrap}
 table.rep.daily td.fd{font-size:12.5px;min-width:0}
@@ -446,6 +447,7 @@ function pctClass(f, v, key) {
   if (f && f.planner && (key === "erc" || key === "bi")) return v[key + "_pcls"] != null ? CLASSES[v[key + "_pcls"]] : null;
   return classForPct(v[key + "_pct"]);
 }
+const avgTag = P => P && P.window > 1 ? `<br><small class="avgt">${P.window}-day avg</small>` : "";   // averaged methods (second header line)
 const PLANNER_COLS = [{key: "ic", label: "IC", group: "Fuels", pct: true}, {key: "sc", label: "SC", group: "Fuels", pct: true}];
 const plannerRange = (lim, i) => { if (i < lim.length) return "≤ " + lim[i];
   const step = lim.some(x => x % 1) ? 0.1 : 1, t = lim[lim.length - 1] + step;   // 61.9 -> 62, 62 -> 63
@@ -626,23 +628,26 @@ function reportTable(f) {
   let h = `<div class="tbl-scroll"><table class="rep"><thead>
     <tr class="grp"><th class="period" rowspan="2" style="background:var(--surface-2)"></th><th rowspan="2"></th>
       <th class="gsep" colspan="${fuels.length}">Fuels</th><th class="gsep" colspan="${wx.length}">Weather</th>
-      <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : fdMethodLabel())})</span></th></tr>
-    <tr>${fuels.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}
+      <th class="gsep" rowspan="2" title="${P ? "Fire Danger Rating Matrix (" + P.label + ")" : META.fire_danger_method === "matrix" ? "Fire Danger Rating Matrix (VPD class × SFDI class)" : "Calculated from the " + idx + " percentile"}">Fire Danger<br><span style="font-weight:500;font-size:11.5px">(${esc(P ? P.label : fdMethodLabel())})</span>${avgTag(P)}</th></tr>
+    <tr>${fuels.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}${c.sub ? `<br><small class="avgt">${esc(c.sub)}</small>` : ""}</th>`).join("")}
         ${wx.map((c, i) => `<th class="${i === 0 ? "gsep" : ""}">${esc(c.label)}</th>`).join("")}</tr>
     </thead><tbody>`;
   rows.forEach((r, ri) => {
     const v = r.values || {};
-    const days = r.days || [];
+    let days = r.days || [];
     const md = iso => { const [y, m, d] = iso.split("-"); return +m + "/" + +d + "/" + y; };   // 11/6/2026
+    const back = (iso, n) => { const t = new Date(iso + "T12:00:00"); t.setDate(t.getDate() - n); return t.toISOString().slice(0, 10); };
+    // averaged methods: a single-day row is the average of the days ending on that day, so show that date range
+    if (P && P.window > 1 && days.length === 1) days = [back(days[0], P.window - 1), days[0]];
     const sub = P ? (days.length === 1 ? md(days[0]) : days.length ? md(days[0]) + " → " + md(days[days.length - 1]) : "No data")
       : days.length === 1 ? dayLabel(days[0]) : days.length ? dayLabel(days[0]) + " → " + dayLabel(days[days.length - 1]).split(" - ")[1] : "No data";
     const fdv = fdOf(r.values), dcls = fdv.cls;
     const start = ri === (P ? rows.length - 2 : 3) ? " block-start" : "";
     h += `<tr class="${start}"><th class="period" rowspan="2"><b>${esc(r.label)}</b><span>${esc(sub)}</span><em>${r.type === "F" ? "Forecast" : "Observed"}</em></th>
       <td class="kind">Value</td>
-      ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
+      ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], P && P.window > 1 && (c.key === "erc" || c.key === "bi") ? 1 : DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" ? `ERC-${fm} class ${v.erc_cls + 1} × BI-${fm} class ${v.bi_cls + 1}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day avg ERC-${fm} ${v.erc_avg} · BI-${fm} ${v.bi_avg} → ` : "") + `ERC class ${v.erc_cls + 1} × BI class ${v.bi_cls + 1}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
@@ -661,7 +666,8 @@ function dailyTable(f) {
   const name = (x, i, arr) => x.type === "O" && i === arr.length - 1 ? "Yesterday" : x.type === "F" && i === 0 ? "Today" : x.type === "F" && i === 1 ? "Tomorrow"
     : new Date(x.d + "T12:00:00").toLocaleDateString("en-US", {weekday: "short"});
   const head = arr => arr.map((x, i) => `<th class="${i === 0 ? "gsep" : ""}"><b>${esc(name(x, i, arr))}</b><span>${md(x.d)}</span></th>`).join("");
-  const cells = (arr, k) => arr.map((x, i) => `<td class="${i === 0 ? "gsep" : ""}${x[k] == null ? " na" : ""}">${fmtNum(x[k])}</td>`).join("");
+  const dec = f.planner.window > 1 ? 1 : 0;   // averaged methods: one decimal so the averages can be checked
+  const cells = (arr, k) => arr.map((x, i) => `<td class="${i === 0 ? "gsep" : ""}${x[k] == null ? " na" : ""}">${fmtNum(x[k], dec)}</td>`).join("");
   const fdc = arr => arr.map((x, i) => { const c = x.fd != null ? CLASSES[x.fd] : null;
     return `<td class="fd${i === 0 ? " gsep" : ""}" style="background:${c ? c.color : "transparent"}">${c ? esc(c.name) : "—"}</td>`; }).join("");
   return `<h3 class="sub">Day-by-Day Fire Danger · Last 7 Days Observed and Next 7 Days Forecast</h3>
@@ -670,25 +676,27 @@ function dailyTable(f) {
       <tr>${head(obs)}${head(fc)}</tr></thead><tbody>
       <tr><th class="rl">ERC-${esc(fm)}</th>${cells(obs, "erc")}${cells(fc, "erc")}</tr>
       <tr><th class="rl">BI-${esc(fm)}</th>${cells(obs, "bi")}${cells(fc, "bi")}</tr>
-      <tr><th class="rl">Fire Danger</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
-    <div class="footnote">Each day is rated from that day's FDRA-average ERC-${esc(fm)} and BI-${esc(fm)}.</div>`;
+      ${f.planner.window > 1 ? `<tr><th class="rl">ERC-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "erc_avg")}${cells(fc, "erc_avg")}</tr>
+      <tr><th class="rl">BI-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}
+      <tr><th class="rl">Fire Danger${f.planner.window > 1 ? ` <small class="avgt">${f.planner.window}-day avg</small>` : ""}</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
+    <div class="footnote">${f.planner.window > 1 ? `Each day is rated from the ${f.planner.window}-day average of ERC-${esc(fm)} and BI-${esc(fm)} ending that day.` : `Each day is rated from that day's FDRA-average ERC-${esc(fm)} and BI-${esc(fm)}.`}</div>`;
 }
 const yearsOf = f => { const y = String(f.analysis_period || "").match(/\d{4}/g); return y && y.length > 1 ? y[0] + "–" + y[y.length - 1] : "historical"; };
 function plannerBreakpoints(f) {
   const P = f.planner, fm = f.fuel_model || "Y", R = P.pct_ranges || {};
   const pr = (k, i) => R[k] && !R[k][i] ? "—" : R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
-  return `<div class="bp"><h3>Fire Danger Breakpoints · ERC-${esc(fm)} and BI-${esc(fm)}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}</th><th>ERC-${esc(fm)} percentile</th><th>BI-${esc(fm)}</th><th>BI-${esc(fm)} percentile</th><th>Other percentiles</th></tr></thead><tbody>
+  return `<div class="bp"><h3>Fire Danger Breakpoints · ERC-${esc(fm)} and BI-${esc(fm)}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}${avgTag(P)}</th><th>ERC-${esc(fm)} percentile${avgTag(P)}</th><th>BI-${esc(fm)}${avgTag(P)}</th><th>BI-${esc(fm)} percentile${avgTag(P)}</th><th>Other percentiles</th></tr></thead><tbody>
     ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td><td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td><td>${(c.min || 1) + (c.max === 100 ? "\u2009–\u2009100" : "\u2009–\u2009" + c.max)}%</td></tr>`).join("")}</tbody></table>
-    <div class="footnote">ERC-${esc(fm)} and BI-${esc(fm)} values are the adopted thresholds for this FDRA. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record and set the ERC-${esc(fm)} and BI-${esc(fm)} colors in the Percentile row. All other percentiles use the standard ranges. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
+    <div class="footnote">ERC-${esc(fm)} and BI-${esc(fm)} values are the adopted thresholds for this FDRA. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record${P.window > 1 ? ` of ${P.window}-day averages` : ""} and set the ERC-${esc(fm)} and BI-${esc(fm)} colors in the Percentile row. All other percentiles use the standard ranges. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
 }
 function plannerMatrix(f) {
   const P = f.planner, fm = f.fuel_model || "Y";
   const tv = (f.report.find(r => r.label === "Today") || {}).values || {};
   const ti = tv.bi_cls, tj = tv.erc_cls, ab = ["L", "M", "H", "VH", "E"];
   return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
-      <tr><th>BI-${esc(fm)} ↓ / ERC-${esc(fm)} →</th>${P.grid[0].map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
+      <tr><th>BI-${esc(fm)} ↓ / ERC-${esc(fm)} →${avgTag(P)}</th>${P.grid[0].map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
       ${P.grid.map((row, i) => `<tr><th>${plannerRange(P.bi, i)}</th>${row.map((c, j) => `<td class="${i === ti && j === tj ? "now" : ""}" style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}${i === ti && j === tj ? " (today)" : ""}"><b>${ab[c]}</b></td>`).join("")}</tr>`).join("")}
-    </tbody></table><div class="footnote">The fire danger rating is where the ERC-${esc(fm)} column and the BI-${esc(fm)} row meet. 7-day ratings use 7-day averages.${ti != null && tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
+    </tbody></table><div class="footnote">The fire danger rating is where the ERC-${esc(fm)} column and the BI-${esc(fm)} row meet. ${P.window > 1 ? `Ratings use the ${P.window}-day average ending on each day.` : "7-day ratings use 7-day averages."}${ti != null && tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
 }
 function breakpointTable(f) {
   if (f.planner) return plannerBreakpoints(f);
@@ -916,7 +924,7 @@ function drawCharts(f, d) {
   host.innerHTML = CHART_INDICES.map(ix => `<figure class="chart" data-ix="${ix.key}">
       <figcaption><b>${esc(ix.label)}</b> <span class="muted">· ${esc(f.name)}</span></figcaption>
       <div class="clegend">
-        <span><i class="ln obs"></i>This season (FDRA average)</span><span><i class="ln fc"></i>Forecast</span>
+        <span><i class="ln obs"></i>${f.planner && f.planner.window > 1 ? `This season (${f.planner.window}-day average)` : "This season (FDRA average)"}</span><span><i class="ln fc"></i>Forecast</span>
         ${d.climo ? `<span><i class="ln avg"></i>Historical average</span><span><i class="ln max"></i>Historical maximum</span>` : ""}
       </div>
       <div class="cbox"></div></figure>`).join("");
@@ -926,8 +934,16 @@ function svgChart(box, f, d, k) {
   const W = Math.max(300, box.clientWidth), H = W < 520 ? 260 : 320;
   const m = {l: 40, r: W < 520 ? 10 : 92, t: 10, b: 28}, iw = W - m.l - m.r, ih = H - m.t - m.b;
   const bpIdx = META.breakpoint_indices.indexOf(k);
-  const obs = (d.season || []).filter(r => r[k] != null).map(r => ({d: r.d, v: r[k], p: r[k + "_pct"]}));
-  const fc = (d.forecast || []).filter(r => r[k] != null).map(r => ({d: r.d, v: r[k], p: r[k + "_pct"]}));
+  let obs = (d.season || []).filter(r => r[k] != null).map(r => ({d: r.d, v: r[k], p: r[k + "_pct"]}));
+  let fc = (d.forecast || []).filter(r => r[k] != null).map(r => ({d: r.d, v: r[k], p: r[k + "_pct"]}));
+  const W7 = f.planner && f.planner.window > 1 ? f.planner.window : 0;
+  if (W7) {   // averaged method: the season line is the N-day average ending on each day (observed, then forecast)
+    const lastObs = obs.length ? obs[obs.length - 1].d : "";
+    const seq = [...obs, ...fc.filter(r => r.d > lastObs)];
+    const avg = seq.map((r, i) => { const w = seq.slice(Math.max(0, i - W7 + 1), i + 1); return {d: r.d, v: +(w.reduce((a, b) => a + b.v, 0) / w.length).toFixed(1), p: null}; });
+    obs = avg.filter(r => r.d <= lastObs).slice(W7 - 1);
+    fc = avg.filter(r => r.d > lastObs);
+  }
   if (!obs.length && !fc.length) { box.innerHTML = `<div class="muted">No data yet.</div>`; return; }
   // x range
   const last = (fc.length ? fc : obs)[(fc.length ? fc : obs).length - 1].d;
@@ -984,9 +1000,17 @@ function svgChart(box, f, d, k) {
     if (f.planner) {   // own method: date, ERC and BI with percentiles, and that day's fire danger from the planner's matrix
       const P = f.planner, fm = f.fuel_model || "Y", row = (best.f ? d.forecast : d.season || []).find(r => r.d === best.d) || {};
       const cls = (v, lim) => v == null ? null : (lim.findIndex(t => v <= t) + 1 || lim.length + 1) - 1;
-      const ec = cls(row.erc, P.erc), bc = cls(row.bi, P.bi), fdc = ec != null && bc != null ? CLASSES[P.grid[bc][ec]] : null;
+      let re = row.erc, rb = row.bi, avgLine = "";
+      if (P.window > 1) {   // average of the window ending on this day (observed days, then forecast days)
+        const lastObs = (d.season || []).length ? d.season[d.season.length - 1].d : "";
+        const seq = [...(d.season || []), ...(d.forecast || []).filter(r => r.d > lastObs)].filter(r => r.d <= best.d).slice(-P.window);
+        const mean = k => { const xs = seq.map(r => r[k]).filter(x => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; };
+        re = mean("erc"); rb = mean("bi");
+        avgLine = `<br>${P.window}-day avg ERC-${fm} <b>${fmtNum(re, 1)}</b> · BI-${fm} <b>${fmtNum(rb, 1)}</b>`;
+      }
+      const ec = cls(re, P.erc), bc = cls(rb, P.bi), fdc = ec != null && bc != null ? CLASSES[P.grid[bc][ec]] : null;
       const [yy, mm, dd] = best.d.split("-"), line = (lbl, key) => `${lbl} <b>${fmtNum(row[key], 1)}</b>${row[key + "_pct"] != null ? ` (${row[key + "_pct"]}%)` : ""}`;
-      tip.innerHTML = `<b>${+mm}/${+dd}/${yy}</b> · ${best.f ? "Forecast" : "Observed"}<br>${line("ERC-" + fm, "erc")}<br>${line("BI-" + fm, "bi")}<br>Fire Danger${fdc ? ` <span class="tsw" style="background:${fdc.color}"></span><b>${esc(fdc.name)}</b>` : " —"}`;
+      tip.innerHTML = `<b>${+mm}/${+dd}/${yy}</b> · ${best.f ? "Forecast" : "Observed"}<br>${line("ERC-" + fm, "erc")}<br>${line("BI-" + fm, "bi")}${avgLine}<br>Fire Danger${fdc ? ` <span class="tsw" style="background:${fdc.color}"></span><b>${esc(fdc.name)}</b>` : " —"}`;
     } else
     tip.innerHTML = `<b>${esc(dayLabel(best.d))}</b>${best.f ? " · forecast" : ""}<br>${k.toUpperCase()} ${fmtNum(best.v, 1)} · ${best.p == null ? "—" : best.p + "%"}${c ? ` <span class="tsw" style="background:${c.color}"></span>${esc(c.name)}` : ""}`;
     tip.hidden = false;
