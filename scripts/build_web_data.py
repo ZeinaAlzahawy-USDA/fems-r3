@@ -575,18 +575,19 @@ def main():
             report.append({"label": label, "days": days, "type": "O" if nf is nfdr else "F",
                            "values": day_values(nf, wx, days) if days else None})
 
-        detail_report, planner = None, None
+        planner = None
+        # 7-row table (Yesterday, Today, Tomorrow, the next two days by name, 7-day averages) for every FDRA:
+        # shown on FDRA pages with their own method, and averaged into the zone tables for all zones
+        name_of = lambda d: datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        rows = [("Yesterday", nfdr, wxd, obs_days[-1:]),
+                ("Today", fc, fwx, [today] if today else []),
+                ("Tomorrow", fc, fwx, future[:1])]
+        rows += [(name_of(d), fc, fwx, [d]) for d in future[1:3]]
+        rows += [("7-Day Observed", nfdr, wxd, obs_days[-7:]),                              # last 7 observed days
+                 ("7-Day Forecast", fc, fwx, ([today] if today else []) + future[:6])]      # today + next 6 days
+        detail_report = [{"label": label, "days": days, "type": "O" if nf is nfdr else "F",
+                          "values": day_values(nf, wx, days) if days else None} for label, nf, wx, days in rows]
         if pm:
-            # FDRA page table: Yesterday, Today, Tomorrow, the next two days by name, 7-day averages
-            name_of = lambda d: datetime.strptime(d, "%Y-%m-%d").strftime("%A")
-            rows = [("Yesterday", nfdr, wxd, obs_days[-1:]),
-                    ("Today", fc, fwx, [today] if today else []),
-                    ("Tomorrow", fc, fwx, future[:1])]
-            rows += [(name_of(d), fc, fwx, [d]) for d in future[1:3]]
-            rows += [("7-Day Observed", nfdr, wxd, obs_days[-7:]),                              # last 7 observed days
-                     ("7-Day Forecast", fc, fwx, ([today] if today else []) + future[:6])]      # today + next 6 days
-            detail_report = [{"label": label, "days": days, "type": "O" if nf is nfdr else "F",
-                              "values": day_values(nf, wx, days) if days else None} for label, nf, wx, days in rows]
             if pm.get("window", 1) > 1:
                 # Averaged methods: ERC and BI in the FDRA table are the N-day averages that set the rating,
                 # with their percentiles against 2005-2024 N-day averages
@@ -629,7 +630,7 @@ def main():
 
         item = {
             "report": report, "breakpoints": breakpoints,
-            **({"detail_report": detail_report, "planner": planner} if pm else {}),
+            "detail_report": detail_report, **({"planner": planner} if pm else {}),
             "key": key, "slug": slug(key), "name": r["FDRA"].strip(), "zone": r["Zone"].strip(),
             "fdra_id": r["FDRA_ID"], "fuel_model": fm, "sig_raws": sig,
             "mfd": r.get("MFD_Thresh"), "lfd": r.get("LFD_Threshold"),
