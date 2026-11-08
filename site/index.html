@@ -104,15 +104,30 @@ nav.zones{background:var(--surface);border-bottom:1px solid var(--line);position
 #map{height:clamp(440px,74vh,910px);width:100%}
 .map-tools{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:5}
 .map-tools .btn{box-shadow:var(--shadow)}
-.map-legend{position:absolute;right:12px;bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;z-index:5;box-shadow:var(--shadow);max-width:calc(100% - 24px)}
-.map-legend .row{display:flex;gap:10px;flex-wrap:wrap}
-@media (min-width:701px){ .map-legend .row{flex-wrap:nowrap;white-space:nowrap} }
-.map-legend .it{display:flex;gap:5px;align-items:center}
-.map-legend .sw{width:12px;height:12px;border-radius:50%;border:1px solid rgba(0,0,0,.3)}
-.map-legend .row + .row{margin-top:6px;padding-top:6px;border-top:1px solid var(--line)}
-.map-legend .lt{font-weight:600;color:var(--ink-2)}
-.map-legend .si{width:16px;height:16px;display:block}
-.map-legend .sep{width:1px;align-self:stretch;background:var(--line)}
+.map-legend{position:absolute;left:12px;bottom:12px;width:300px;background:var(--surface);border:1px solid var(--line);border-radius:12px;font-size:12px;z-index:5;box-shadow:0 6px 24px rgba(20,20,20,.12);max-width:calc(100% - 24px)}
+.map-legend .lg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px 14px;background:none;border:0;font:inherit;font-weight:650;font-size:13px;color:var(--ink-1, #1f1f1f);cursor:pointer}
+.map-legend .lg-head .chev{width:18px;height:18px;display:grid;place-items:center;border-radius:50%;background:var(--surface-2);color:var(--ink-3);font-size:9px;transition:transform .15s}
+.map-legend.closed .lg-head .chev{transform:rotate(180deg)}
+.map-legend.closed .lg-body{display:none}
+.map-legend .lg-body{padding:0 14px 12px}
+.map-legend .lg-sec{padding:10px 0;border-top:1px solid var(--line)}
+.map-legend h5{margin:0;font-size:10.5px;font-weight:650;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-2)}
+.map-legend .sub{font-size:10.5px;color:var(--ink-3);margin:1px 0 7px}
+.map-legend .ramp{display:flex;height:10px;border-radius:5px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+.map-legend .ramp span{flex:1}
+.map-legend .ramp span + span{border-left:1.5px solid var(--surface)}
+.map-legend .lbls{display:flex;margin-top:4px;font-size:10.5px;color:var(--ink-2)}
+.map-legend .lbls span{flex:1;text-align:center;white-space:nowrap}
+.map-legend .ticks{position:relative;height:14px;margin-top:3px;font-size:10.5px;color:var(--ink-2)}
+.map-legend .ticks span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.map-legend .ticks span:first-child{transform:none}.map-legend .ticks span:last-child{transform:translateX(-100%)}
+.map-legend .row{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.map-legend .it{display:inline-flex;gap:6px;align-items:center;white-space:nowrap;color:var(--ink-1, #1f1f1f)}
+.map-legend .si{width:16px;height:16px;display:block;flex:none}
+.map-legend .ln{width:18px;height:0;border-top:3px solid #1e3a8a;border-radius:2px}
+.map-legend .dsh{width:14px;height:12px;border:1.5px dashed #6e6a62;border-radius:2px}
+.map-legend .row + .row{margin-top:6px}
+@media (max-width:700px){ .map-legend{width:270px} }
 .map-msg{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;color:var(--ink-2);background:var(--surface-2)}
 .map-msg.show{display:grid}
 
@@ -364,7 +379,7 @@ footer{color:var(--ink-3);font-size:12px;text-align:center;padding:20px 16px 40p
   table.rep th.period{min-width:112px;padding-left:6px}
   table.rep th.period em{display:none}
   .map-tools{flex-direction:row;top:auto;bottom:12px;right:12px;left:auto}
-  .map-legend{bottom:auto;top:12px}
+  .map-legend{bottom:auto;top:12px;left:12px}
   .map-tools .btn{padding:5px 8px;font-size:12.5px}
   table.bpt td,table.bpt th{white-space:nowrap;padding:4px 8px}
 }
@@ -959,18 +974,38 @@ function stationIcon(shape, cls, trend, ring = "") {
   const glyph = trend === "up" ? `<path d="M12 6.6 L16.2 11.6 H13.4 V17.2 H10.6 V11.6 H7.8 Z" fill="${ink}"/>`
     : trend === "down" ? `<path d="M12 17.4 L16.2 12.4 H13.4 V6.8 H10.6 V12.4 H7.8 Z" fill="${ink}"/>`
     : trend === "flat" ? `<rect x="7.4" y="10.7" width="9.2" height="2.6" rx="1" fill="${ink}"/>` : "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${body}${glyph}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" shape-rendering="geometricPrecision">${body}${glyph}</svg>`;
   return (_icons[key] = "data:image/svg+xml;base64," + btoa(svg));
 }
 function renderLegend() {
   const ic = (shape, cls, trend) => `<img class="si" alt="" src="${stationIcon(shape, cls, trend)}">`;
-  $("#mapLegend").innerHTML = `<div class="row"><span class="lt">FDRA</span>${CLASSES.map(c => `<span class="it"><span class="sw" style="background:${c.color}"></span>${esc(c.name)}</span>`).join("")}
-    <span class="it"><span class="sw" style="background:transparent;border:1px dashed #6e6a62;border-radius:2px"></span>No data yet</span>
-    <span class="it"><span class="sw" style="background:transparent;border:3px solid #1e3a8a;border-radius:2px"></span>Zone boundary</span></div>
-    <div class="row st"><span class="lt" title="ERC-Y percentile of the latest observed day, against each station's 2005–2024 record">Stations · ERC-Y percentile</span>${ST_CLASSES.map(c => `<span class="it">${ic("circle", c, null)}${esc(c.name)}</span>`).join("")}
-    <span class="it">${ic("circle", null, null)}No history</span>
-    <span class="sep"></span><span class="it">${ic("circle", ST_CLASSES[0], null)}FDRA station</span><span class="it">${ic("diamond", ST_CLASSES[0], null)}Other station</span>
-    <span class="sep"></span><span class="it" title="Change in ERC-Y over the most recent 3 days">${ic("circle", null, "up")}Increase</span><span class="it">${ic("circle", null, "down")}Decrease</span><span class="it">${ic("circle", null, "flat")}No change</span></div>`;
+  const NEUTRAL = {min: -1, color: "#5f6670"};   // neutral marker for the shape and trend keys
+  let closed = window.innerWidth < 700;
+  try { const v = localStorage.getItem("legendClosed"); if (v != null) closed = v === "1"; } catch (e) {}
+  const el = $("#mapLegend");
+  el.classList.toggle("closed", closed);
+  const ramp = cols => `<div class="ramp">${cols.map(c => `<span style="background:${c}"></span>`).join("")}</div>`;
+  const ticks = ["0", "60", "80", "90", "97", "100"];
+  el.innerHTML = `<button class="lg-head" type="button" aria-expanded="${!closed}">Map Legend <span class="chev">▼</span></button>
+    <div class="lg-body">
+      <div class="lg-sec"><h5>FDRA Fire Danger</h5><div class="sub">Calculated rating for today</div>
+        ${ramp(CLASSES.map(c => c.color))}
+        <div class="lbls">${CLASSES.map(c => `<span>${esc(c.name)}</span>`).join("")}</div></div>
+      <div class="lg-sec"><h5>Station ERC-Y Percentile</h5><div class="sub">Latest observed day vs. each station's 2005–2024 record</div>
+        ${ramp(ST_CLASSES.map(c => c.color))}
+        <div class="ticks">${ticks.map((t, i) => `<span style="left:${i * 20}%">${t}</span>`).join("")}</div>
+        <div class="row" style="margin-top:4px"><span class="it">${ic("circle", null, null)}No history</span></div></div>
+      <div class="lg-sec"><h5>Station Markers</h5><div class="sub">Arrow shows the ERC-Y change over the last 3 days</div>
+        <div class="row"><span class="it">${ic("circle", NEUTRAL, null)}FDRA station</span><span class="it">${ic("diamond", NEUTRAL, null)}Other station</span></div>
+        <div class="row"><span class="it">${ic("circle", NEUTRAL, "up")}Rising</span><span class="it">${ic("circle", NEUTRAL, "down")}Falling</span><span class="it">${ic("circle", NEUTRAL, "flat")}Steady</span></div></div>
+      <div class="lg-sec"><h5>Boundaries</h5>
+        <div class="row" style="margin-top:6px"><span class="it"><span class="ln"></span>Zone</span><span class="it"><span class="dsh"></span>FDRA without data</span></div></div>
+    </div>`;
+  el.querySelector(".lg-head").onclick = () => {
+    const c = !el.classList.contains("closed");
+    el.classList.toggle("closed", c); el.querySelector(".lg-head").setAttribute("aria-expanded", String(!c));
+    try { localStorage.setItem("legendClosed", c ? "1" : "0"); } catch (e) {}
+  };
 }
 
 /* ---------------- season charts (ERC / BI) ---------------- */
