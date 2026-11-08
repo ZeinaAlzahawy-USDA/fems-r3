@@ -444,7 +444,7 @@ const DEC = {gsi: 2, precip: 2, sc: 1};
 // Percentile cell color. FDRAs with their own planner method: ERC and BI percentiles are colored by the
 // planner's numbers (expressed as percentiles of the FDRA's history); the other percentiles use the standard ranges.
 function pctClass(f, v, key) {
-  if (f && f.planner && (key === "erc" || key === "bi")) return v[key + "_pcls"] != null ? CLASSES[v[key + "_pcls"]] : null;
+  if (f && f.planner && (key === "erc" || key === "bi") && f.planner[key]) return v[key + "_pcls"] != null ? CLASSES[v[key + "_pcls"]] : null;
   return classForPct(v[key + "_pct"]);
 }
 const avgTag = P => P && P.window > 1 ? `<br><small class="avgt">${P.window}-day avg</small>` : "";   // averaged methods (second header line)
@@ -647,7 +647,7 @@ function reportTable(f) {
       <td class="kind">Value</td>
       ${fuels.map((c, i) => `<td class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], P && P.window > 1 && (c.key === "erc" || c.key === "bi") ? 1 : DEC[c.key] || 0)}</td>`).join("")}
       ${wx.map((c, i) => `<td rowspan="2" class="${i === 0 ? "gsep" : ""}${v[c.key] == null ? " na" : ""}">${fmtNum(v[c.key], DEC[c.key] || 0)}</td>`).join("")}
-      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day avg ERC-${fm} ${v.erc_avg} · BI-${fm} ${v.bi_avg} → ` : "") + `ERC class ${v.erc_cls + 1} × BI class ${v.bi_cls + 1}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
+      <td rowspan="2" class="fd gsep" style="background:${dcls ? dcls.color : "transparent"}" title="${fdv.method === "planner" && !P ? "" : fdv.method === "planner" ? (v.erc_avg != null ? `${P.window}-day avg ERC-${fm} ${v.erc_avg}${P.bi ? ` · BI-${fm} ${v.bi_avg}` : ""} → ` : "") + `ERC class ${v.erc_cls + 1}${P.bi ? ` × BI class ${v.bi_cls + 1}` : ""}` : fdv.method === "matrix" ? "VPD × SFDI" : fdv.method ? fdv.method.toUpperCase() + " percentile (VPD or SFDI unavailable)" : ""}">${dcls ? esc(dcls.name) : "—"}${fdv.method === "planner" ? "" : fdv.method && fdv.method !== "matrix" && META.fire_danger_method === "matrix" ? "<br><small style='font-weight:500'>(ERC)</small>" : ""}</td></tr>
       <tr><td class="kind">Percentile</td>
       ${fuels.map((c, i) => {
         if (!c.pct) return `<td class="${i === 0 ? "gsep" : ""} na">—</td>`;
@@ -677,20 +677,29 @@ function dailyTable(f) {
       <tr><th class="rl">ERC-${esc(fm)}</th>${cells(obs, "erc")}${cells(fc, "erc")}</tr>
       <tr><th class="rl">BI-${esc(fm)}</th>${cells(obs, "bi")}${cells(fc, "bi")}</tr>
       ${f.planner.window > 1 ? `<tr><th class="rl">ERC-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "erc_avg")}${cells(fc, "erc_avg")}</tr>
-      <tr><th class="rl">BI-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}
+      ${f.planner.bi ? `<tr><th class="rl">BI-${esc(fm)} <small class="avgt">${f.planner.window}-day avg</small></th>${cells(obs, "bi_avg")}${cells(fc, "bi_avg")}</tr>` : ""}` : ""}
       <tr><th class="rl">Fire Danger${f.planner.window > 1 ? ` <small class="avgt">${f.planner.window}-day avg</small>` : ""}</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
-    <div class="footnote">${f.planner.window > 1 ? `Each day is rated from the ${f.planner.window}-day average of ERC-${esc(fm)} and BI-${esc(fm)} ending that day.` : `Each day is rated from that day's FDRA-average ERC-${esc(fm)} and BI-${esc(fm)}.`}</div>`;
+    <div class="footnote">${(() => { const ix = f.planner.bi ? `ERC-${esc(fm)} and BI-${esc(fm)}` : `ERC-${esc(fm)}`;
+      return f.planner.window > 1 ? `Each day is rated from the ${f.planner.window}-day average of ${ix} ending that day.` : `Each day is rated from that day's FDRA-average ${ix}.`; })()}</div>`;
 }
 const yearsOf = f => { const y = String(f.analysis_period || "").match(/\d{4}/g); return y && y.length > 1 ? y[0] + "–" + y[y.length - 1] : "historical"; };
 function plannerBreakpoints(f) {
   const P = f.planner, fm = f.fuel_model || "Y", R = P.pct_ranges || {};
   const pr = (k, i) => R[k] && !R[k][i] ? "—" : R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
-  return `<div class="bp"><h3>Fire Danger Breakpoints · ERC-${esc(fm)} and BI-${esc(fm)}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}${avgTag(P)}</th><th>ERC-${esc(fm)} percentile${avgTag(P)}</th><th>BI-${esc(fm)}${avgTag(P)}</th><th>BI-${esc(fm)} percentile${avgTag(P)}</th><th>Other percentiles</th></tr></thead><tbody>
-    ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td><td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td><td>${(c.min || 1) + (c.max === 100 ? "\u2009–\u2009100" : "\u2009–\u2009" + c.max)}%</td></tr>`).join("")}</tbody></table>
-    <div class="footnote">ERC-${esc(fm)} and BI-${esc(fm)} values are the adopted thresholds for this FDRA. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record${P.window > 1 ? ` of ${P.window}-day averages` : ""} and set the ERC-${esc(fm)} and BI-${esc(fm)} colors in the Percentile row. All other percentiles use the standard ranges. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
+  const B = !!P.bi, ix = B ? `ERC-${esc(fm)} and BI-${esc(fm)}` : `ERC-${esc(fm)}`;
+  return `<div class="bp"><h3>Fire Danger Breakpoints · ${ix}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}${avgTag(P)}</th><th>ERC-${esc(fm)} percentile${avgTag(P)}</th>${B ? `<th>BI-${esc(fm)}${avgTag(P)}</th><th>BI-${esc(fm)} percentile${avgTag(P)}</th>` : ""}<th>Other percentiles</th></tr></thead><tbody>
+    ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td>${B ? `<td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td>` : ""}<td>${(c.min || 1) + (c.max === 100 ? "\u2009–\u2009100" : "\u2009–\u2009" + c.max)}%</td></tr>`).join("")}</tbody></table>
+    <div class="footnote">${ix} values are the adopted thresholds for this FDRA${B ? "" : "; the ERC-" + esc(fm) + " class is the fire danger rating"}${P.window > 1 ? `, applied to the ${P.window}-day average` : ""}. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record${P.window > 1 ? ` of ${P.window}-day averages` : ""} and set the ${ix} colors in the Percentile row. All other percentiles use the standard ranges. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
 }
 function plannerMatrix(f) {
   const P = f.planner, fm = f.fuel_model || "Y";
+  if (!P.grid) {   // ERC-only method: one row, the ERC class is the rating
+    const tj = ((f.report.find(r => r.label === "Today") || {}).values || {}).erc_cls, ab = ["L", "M", "H", "VH", "E"];
+    return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
+      <tr><th>ERC-${esc(fm)} →${avgTag(P)}</th>${CLASSES.map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
+      <tr><th>Fire Danger</th>${CLASSES.map((c, j) => `<td class="${j === tj ? "now" : ""}" style="background:${c.color}" title="${esc(c.name)}${j === tj ? " (today)" : ""}"><b>${ab[j]}</b></td>`).join("")}</tr>
+    </tbody></table><div class="footnote">The fire danger rating is the ERC-${esc(fm)} class. ${P.window > 1 ? `Ratings use the ${P.window}-day average ending on each day.` : "7-day ratings use 7-day averages."}${tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
+  }
   const tv = (f.report.find(r => r.label === "Today") || {}).values || {};
   const ti = tv.bi_cls, tj = tv.erc_cls, ab = ["L", "M", "H", "VH", "E"];
   return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
@@ -744,7 +753,9 @@ function legendHtml(f) {
 function ratingBox(f) {
   const d = currentDanger(f), calc = calcDanger(f);
   const r = ratings[f.key];
-  const how = f.planner ? `From today's forecast ERC-${f.fuel_model || "Y"} and BI-${f.fuel_model || "Y"} in this FDRA's rating matrix` : "From today's forecast in the rating matrix";
+  const fm_ = f.fuel_model || "Y", P_ = f.planner;
+  const how = !P_ ? "From today's forecast in the rating matrix"
+    : `From today's forecast ${P_.window > 1 ? P_.window + "-day average " : ""}${P_.bi ? `ERC-${fm_} and BI-${fm_} in this FDRA's rating matrix` : `ERC-${fm_} and this FDRA's thresholds`}`;
   let html = `<span style="color:var(--ink-3)" title="${d.official ? "Set by an authorized editor" : esc(how)}">${d.official ? "Official" : "Today · Forecast"}</span>
     <span class="badge" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "No data"}${!d.official && calc.pct != null ? ` <small>${calc.pct}%</small>` : ""}</span>`;
   if (d.official && r?.note) html += `<span style="color:var(--ink-2);max-width:260px" title="${esc(r.note)}">“${esc(r.note.length > 40 ? r.note.slice(0, 40) + "…" : r.note)}”</span>`;
@@ -1006,9 +1017,10 @@ function svgChart(box, f, d, k) {
         const seq = [...(d.season || []), ...(d.forecast || []).filter(r => r.d > lastObs)].filter(r => r.d <= best.d).slice(-P.window);
         const mean = k => { const xs = seq.map(r => r[k]).filter(x => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; };
         re = mean("erc"); rb = mean("bi");
-        avgLine = `<br>${P.window}-day avg ERC-${fm} <b>${fmtNum(re, 1)}</b> · BI-${fm} <b>${fmtNum(rb, 1)}</b>`;
+        avgLine = `<br>${P.window}-day avg ERC-${fm} <b>${fmtNum(re, 1)}</b>${P.bi ? ` · BI-${fm} <b>${fmtNum(rb, 1)}</b>` : ""}`;
       }
-      const ec = cls(re, P.erc), bc = cls(rb, P.bi), fdc = ec != null && bc != null ? CLASSES[P.grid[bc][ec]] : null;
+      const ec = cls(re, P.erc), bc = P.bi ? cls(rb, P.bi) : null;
+      const fdc = P.grid ? (ec != null && bc != null ? CLASSES[P.grid[bc][ec]] : null) : ec != null ? CLASSES[ec] : null;
       const [yy, mm, dd] = best.d.split("-"), line = (lbl, key) => `${lbl} <b>${fmtNum(row[key], 1)}</b>${row[key + "_pct"] != null ? ` (${row[key + "_pct"]}%)` : ""}`;
       tip.innerHTML = `<b>${+mm}/${+dd}/${yy}</b> · ${best.f ? "Forecast" : "Observed"}<br>${line("ERC-" + fm, "erc")}<br>${line("BI-" + fm, "bi")}${avgLine}<br>Fire Danger${fdc ? ` <span class="tsw" style="background:${fdc.color}"></span><b>${esc(fdc.name)}</b>` : " —"}`;
     } else
