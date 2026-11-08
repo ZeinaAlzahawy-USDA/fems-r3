@@ -106,7 +106,7 @@ ABZ_GRID = [[0, 0, 0, 1, 1],   # same matrix for the ABZ and WAZ FDRAs below
             [1, 1, 2, 2, 3],
             [1, 2, 3, 3, 4],
             [2, 3, 3, 4, 4]]
-PEZ_MTN_GRID = [[0, 0, 0, 1, 2],   # PEZ Guadalupe and Sacramento Mountains
+PEZ_MTN_GRID = [[0, 0, 0, 1, 2],   # all PEZ FDRAs (Guadalupe, Sacramento, Caprock, East Pecos, West Pecos)
                 [0, 1, 1, 2, 2],
                 [1, 1, 1, 2, 2],
                 [1, 1, 2, 3, 3],
@@ -149,6 +149,22 @@ PLANNER_METHODS = {
         "bi": [14, 26, 38, 47],
         "grid": ABZ_GRID, "window": 7,
     },
+    # Fuel model X FDRAs (ERC-X x BI-X; the fuel model comes from FM_Long in r3_fdra.csv)
+    "ABZ Eastern Woodlands": {
+        "erc": [74, 89, 97, 103],
+        "bi": [182, 243, 290, 306],
+        "grid": ABZ_GRID,
+    },
+    "ABZ Rio Grande Valley": {
+        "erc": [82, 93, 99, 102],
+        "bi": [185, 232, 260, 292],
+        "grid": ABZ_GRID,
+    },
+    "ABZ Western Grasslands": {
+        "erc": [70, 81, 90, 95],
+        "bi": [210, 285, 315, 360],
+        "grid": ABZ_GRID,
+    },
     # ERC-only methods: the ERC-Y class is the fire danger rating (no BI, no matrix)
     "SEZ Sonoran": {"erc": [36, 53, 63, 74]},
     "SEZ Desert Grasslands": {"erc": [30, 45, 58, 69]},
@@ -157,6 +173,21 @@ PLANNER_METHODS = {
     "PIFC Brush": {"erc": [34, 45, 55, 70], "window": 3},
     "PIFC Timber Woodland": {"erc": [29, 38, 46, 59], "window": 3},
     "ABZ Eastern Grasslands": {"erc": [43, 60, 74, 92]},
+    "PEZ Caprock": {
+        "erc": [53.9, 73.9, 85.9, 95.9],
+        "bi": [179.9, 227.9, 269.9, 339.9],
+        "grid": PEZ_MTN_GRID,
+    },
+    "PEZ East Pecos": {
+        "erc": [54.9, 67.9, 85.9, 96.9],
+        "bi": [129.9, 199.9, 259.9, 314.9],
+        "grid": PEZ_MTN_GRID,
+    },
+    "PEZ West Pecos": {
+        "erc": [54.9, 69.9, 86.9, 98.9],
+        "bi": [134.9, 184.9, 231.9, 287.9],
+        "grid": PEZ_MTN_GRID,
+    },
     "PEZ Guadalupe Mountains": {
         "erc": [39.9, 47.9, 54.9, 61.9],
         "bi": [39.9, 47.9, 54.9, 61.9],
