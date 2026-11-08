@@ -447,7 +447,9 @@ function pctClass(f, v, key) {
   return classForPct(v[key + "_pct"]);
 }
 const PLANNER_COLS = [{key: "ic", label: "IC", group: "Fuels", pct: true}, {key: "sc", label: "SC", group: "Fuels", pct: true}];
-const plannerRange = (lim, i) => i < lim.length ? "≤ " + lim[i] : "≥ " + (lim[lim.length - 1] + 1);
+const plannerRange = (lim, i) => { if (i < lim.length) return "≤ " + lim[i];
+  const step = lim.some(x => x % 1) ? 0.1 : 1, t = lim[lim.length - 1] + step;   // 61.9 -> 62, 62 -> 63
+  return "≥ " + +t.toFixed(1); };
 
 let META, CLASSES, BY_ZONE = {}, FDRA = {}, STATIONS = {};
 let ratings = {};          // FDRA_ZONE -> {rating, note, oid, edited}
@@ -669,14 +671,15 @@ function dailyTable(f) {
       <tr><th class="rl">ERC-${esc(fm)}</th>${cells(obs, "erc")}${cells(fc, "erc")}</tr>
       <tr><th class="rl">BI-${esc(fm)}</th>${cells(obs, "bi")}${cells(fc, "bi")}</tr>
       <tr><th class="rl">Fire Danger</th>${fdc(obs)}${fdc(fc)}</tr></tbody></table></div>
-    <div class="footnote">Each day on its own: that day's ERC-${esc(fm)} and BI-${esc(fm)} (average of the FDRA's stations) in the ${esc(f.planner.label)} matrix.</div>`;
+    <div class="footnote">Each day is rated from that day's FDRA-average ERC-${esc(fm)} and BI-${esc(fm)}.</div>`;
 }
+const yearsOf = f => { const y = String(f.analysis_period || "").match(/\d{4}/g); return y && y.length > 1 ? y[0] + "–" + y[y.length - 1] : "historical"; };
 function plannerBreakpoints(f) {
   const P = f.planner, fm = f.fuel_model || "Y", R = P.pct_ranges || {};
-  const pr = (k, i) => R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
+  const pr = (k, i) => R[k] && !R[k][i] ? "—" : R[k] ? (R[k][i][0] === R[k][i][1] ? R[k][i][0] : R[k][i][0] + "\u2009–\u2009" + R[k][i][1]) + "%" : "—";
   return `<div class="bp"><h3>Fire Danger Breakpoints · ERC-${esc(fm)} and BI-${esc(fm)}</h3><table class="bpt"><thead><tr><th>Fire Danger</th><th>ERC-${esc(fm)}</th><th>ERC-${esc(fm)} percentile</th><th>BI-${esc(fm)}</th><th>BI-${esc(fm)} percentile</th><th>Other percentiles</th></tr></thead><tbody>
     ${CLASSES.map((c, i) => `<tr style="background:${c.color}"><td><b>${esc(c.name)}</b></td><td>${plannerRange(P.erc, i)}</td><td>${pr("erc", i)}</td><td>${plannerRange(P.bi, i)}</td><td>${pr("bi", i)}</td><td>${(c.min || 1) + (c.max === 100 ? "\u2009–\u2009100" : "\u2009–\u2009" + c.max)}%</td></tr>`).join("")}</tbody></table>
-    <div class="footnote">Each number is the top of its class; the last class is anything above the fourth number. The ERC-${esc(fm)} and BI-${esc(fm)} percentile columns show where these numbers fall in this FDRA's ${esc(f.analysis_period || "")} history and set the colors of the ERC and BI percentiles in the table. All other percentiles (IC, SC, SFDI, VPD, HDWI, 100HR, 1000HR, KBDI, GSI) are colored with the standard ranges in the last column. 100HR, 1000HR and GSI are shown as dryness percentiles (higher = drier). Fuel model ${esc(fm)}.</div></div>`;
+    <div class="footnote">ERC-${esc(fm)} and BI-${esc(fm)} values are the adopted thresholds for this FDRA. The percentile columns express the same thresholds as percentiles of the ${esc(yearsOf(f))} record and set the ERC-${esc(fm)} and BI-${esc(fm)} colors in the Percentile row. All other percentiles use the standard ranges. 100HR, 1000HR and GSI percentiles indicate dryness.</div></div>`;
 }
 function plannerMatrix(f) {
   const P = f.planner, fm = f.fuel_model || "Y";
@@ -685,7 +688,7 @@ function plannerMatrix(f) {
   return `<div class="bp"><h3>Fire Danger Matrix · ${esc(P.label)}</h3><table class="bpt mtx"><thead>
       <tr><th>BI-${esc(fm)} ↓ / ERC-${esc(fm)} →</th>${P.grid[0].map((_, j) => `<th>${plannerRange(P.erc, j)}</th>`).join("")}</tr></thead><tbody>
       ${P.grid.map((row, i) => `<tr><th>${plannerRange(P.bi, i)}</th>${row.map((c, j) => `<td class="${i === ti && j === tj ? "now" : ""}" style="background:${CLASSES[c].color}" title="${esc(CLASSES[c].name)}${i === ti && j === tj ? " (today)" : ""}"><b>${ab[c]}</b></td>`).join("")}</tr>`).join("")}
-    </tbody></table><div class="footnote">The ERC-${esc(fm)} class (column) and BI-${esc(fm)} class (row) meet in the matrix to give the fire danger. The 7-day rows use the 7-day averages.${ti != null && tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
+    </tbody></table><div class="footnote">The fire danger rating is where the ERC-${esc(fm)} column and the BI-${esc(fm)} row meet. 7-day ratings use 7-day averages.${ti != null && tj != null ? ` <span class="nowkey"></span> Today` : ""}</div></div>`;
 }
 function breakpointTable(f) {
   if (f.planner) return plannerBreakpoints(f);
@@ -859,7 +862,7 @@ function renderView() {
       <div class="rating-box seg" role="group" aria-label="Chart range">
         <button data-range="year" aria-pressed="${chartRange === "year"}">This year</button>
         <button data-range="90" aria-pressed="${chartRange === "90"}">Last 90 days</button></div>
-      <div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · ${f.planner ? "fire danger bands from this FDRA's ERC-" + esc(f.fuel_model) + " and BI-" + esc(f.fuel_model) + " breakpoints" : "fire danger bands based on " + esc(f.analysis_period) + " percentiles"}</div></div>
+      ${f.planner ? "" : `<div class="pmeta">${esc(f.name)} FDRA · fuel model ${esc(f.fuel_model)} · fire danger bands based on ${esc(f.analysis_period)} percentiles</div>`}</div>
       <div class="charts" id="charts"><div class="muted">Loading charts…</div></div></section>`;
   loadCharts(f);
 }
