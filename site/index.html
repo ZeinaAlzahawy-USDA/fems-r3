@@ -733,7 +733,8 @@ function legendHtml(f) {
 function ratingBox(f) {
   const d = currentDanger(f), calc = calcDanger(f);
   const r = ratings[f.key];
-  let html = `<span style="color:var(--ink-3)">${d.official ? "Official" : "Calculated"}</span>
+  const how = f.planner ? `From today's forecast ERC-${f.fuel_model || "Y"} and BI-${f.fuel_model || "Y"} in this FDRA's rating matrix` : "From today's forecast in the rating matrix";
+  let html = `<span style="color:var(--ink-3)" title="${d.official ? "Set by an authorized editor" : esc(how)}">${d.official ? "Official" : "Today · Forecast"}</span>
     <span class="badge" style="background:${d.cls ? d.cls.color : "var(--surface-2)"}">${d.cls ? esc(d.cls.name) : "No data"}${!d.official && calc.pct != null ? ` <small>${calc.pct}%</small>` : ""}</span>`;
   if (d.official && r?.note) html += `<span style="color:var(--ink-2);max-width:260px" title="${esc(r.note)}">“${esc(r.note.length > 40 ? r.note.slice(0, 40) + "…" : r.note)}”</span>`;
   if (auth.canEdit) html += `<button class="btn" data-edit="${esc(f.key)}">Edit rating</button>`;
