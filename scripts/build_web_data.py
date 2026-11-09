@@ -724,10 +724,27 @@ def main():
             "map": st_map,
         })
 
+    # When the pipeline last pulled data from FEMS (not when this website build ran):
+    # the newest pull time in the hourly, daily and forecast files, converted to UTC.
+    fems_pulls = {}
+    for label, name, col, tz in (("hourly", "history_hourly_weather.csv", "pull_date", "UTC"),
+                                 ("daily", "history_daily_nfdrminmax.csv", "pull_date", "UTC"),
+                                 ("forecast", "history_forecast_daily_nfdr.csv", "Pull_date_mst", "MST")):
+        try:
+            v = pd.read_csv(P(name), usecols=[col], dtype=str)[col].dropna()
+            t = pd.to_datetime(v, errors="coerce", utc=(tz == "UTC")).max()
+            if pd.notna(t):
+                t = t.tz_localize("Etc/GMT+7") if tz == "MST" else t
+                fems_pulls[label] = t.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception as e:
+            print(f"Note: no FEMS pull time from {name} ({e})")
+    fems_pulled = max(fems_pulls.values()) if fems_pulls else None
+
     if avg_pct_rows:   # downloadable: the exact N-day average percentile tables the site used
         pd.DataFrame(avg_pct_rows).to_csv(os.path.join(OUT_DIR, "r3_fdra_percentile_multiday.csv"), index=False)
     write_json(os.path.join(OUT_DIR, "meta.json"), {
         "generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "fems_pulled_utc": fems_pulled, "fems_pulls_utc": fems_pulls,
         "latest_obs_date": latest_obs_date,
         "forecast_pull_mst": latest_pull,
         "today": today,
