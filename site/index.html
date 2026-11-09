@@ -450,6 +450,22 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
 .site-foot .foot-note .sep{margin:0 6px;opacity:.6}
 @media (max-width:900px){.site-foot .foot-note{justify-content:center}.site-foot .wrap{justify-content:center;text-align:center}.site-foot .foot-brand{flex-direction:column;gap:6px}.site-foot .foot-div{display:none}.site-foot .partners{margin-left:0;justify-content:center}.site-foot .partners img{height:68px}}
 
+
+/* zone menu: part of the navy tab bar */
+.ztab .chev{width:12px;height:8px;color:var(--bar-ink-2);margin-left:6px;flex:none;transition:transform .15s}
+.ztab:hover .chev,.ztab[aria-selected="true"] .chev{color:#fff}
+.ztab[aria-expanded="true"] .chev{transform:rotate(180deg);color:#fff}
+.zmenu{background:var(--bar-hover);border:0;border-radius:0;box-shadow:0 14px 28px rgba(0,10,30,.35);padding:0 0 6px;color:var(--bar-ink)}
+.zmenu .mhead{margin:0 0 4px;padding:11px 16px;border-bottom:1px solid rgba(255,255,255,.12);color:var(--bar-ink-2)}
+.zmenu .mhead b{color:#fff}
+.zmenu .mi{border-radius:0;padding:9px 16px;color:var(--bar-ink)}
+.zmenu .mi b{color:#fff}
+.zmenu .mi small{color:var(--bar-ink-2)}
+.zmenu .mi:hover,.zmenu .mi:focus{background:var(--bar-sel);outline:none}
+.zmenu .mi.cur{background:var(--bar-sel);box-shadow:inset 3px 0 0 var(--brand-accent);font-weight:600}
+.zmenu .mi .sw{border-color:rgba(255,255,255,.55)}
+.zmenu .mi.cur .ck::after,:root .zmenu .mi.cur .ck::after{border-color:#fff !important}
+.zmenu .msep{border-top:1px solid rgba(255,255,255,.12);color:var(--bar-ink-2);padding:10px 16px 4px}
 </style>
 </head>
 <body>
@@ -675,7 +691,7 @@ function renderTabs() {
       const sub = sel ? (state.fdra ? FDRA[state.fdra].name : "Whole zone") : `${BY_ZONE[z].length} FDRA${BY_ZONE[z].length === 1 ? "" : "s"}`;
       return `<button class="ztab" role="tab" data-zonetab="${esc(z)}" aria-selected="${sel}" aria-haspopup="menu" aria-expanded="false">
         <span class="dot" style="background:${w ? w.color : "transparent"}" title="${w ? "Zone rating: " + esc(w.name) : ""}"></span>
-        <span class="tl"><b>${esc(zoneLabel(z))}</b><small>${esc(sub)}</small></span><span class="chev" aria-hidden="true">▾</span></button>`;
+        <span class="tl"><b>${esc(zoneLabel(z))}</b><small>${esc(sub)}</small></span><svg class="chev" viewBox="0 0 12 8" aria-hidden="true"><path d="M1.5 1.75 6 6.25l4.5-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
     }).join("");
 }
 
@@ -699,8 +715,9 @@ function positionMenu() {
   const m = $("#zoneMenu"); if (!m.classList.contains("show")) return;
   const btn = document.querySelector(`.ztab[data-zonetab="${CSS.escape(m.dataset.zone)}"]`); if (!btn) return;
   const r = btn.getBoundingClientRect();
-  m.style.top = (r.bottom + window.scrollY + 4) + "px";
-  m.style.left = Math.max(8, Math.min(r.left + window.scrollX, window.innerWidth - m.offsetWidth - 8)) + "px";
+  m.style.top = (r.bottom + window.scrollY) + "px";                       // attached to the bottom of the tab
+  m.style.minWidth = Math.max(260, r.width) + "px";
+  m.style.left = Math.max(0, Math.min(r.left + window.scrollX, window.innerWidth - m.offsetWidth)) + "px";
 }
 function closeZoneMenu() {
   const m = $("#zoneMenu"); m.classList.remove("show"); m.dataset.zone = "";
