@@ -466,6 +466,13 @@ footer.site-foot{margin-top:40px;background:var(--hdr-bg);border-top:4px solid #
 .zmenu .mi .sw{border-color:rgba(255,255,255,.55)}
 .zmenu .mi.cur .ck::after,:root .zmenu .mi.cur .ck::after{border-color:#fff !important}
 .zmenu .msep{border-top:1px solid rgba(255,255,255,.12);color:var(--bar-ink-2);padding:10px 16px 4px}
+
+/* station hover label */
+.st-tip{position:absolute;z-index:6;pointer-events:none;transform:translate(-50%,-100%);background:#0a2a55;color:#fff;padding:7px 11px;border-radius:6px;font-size:12.5px;line-height:1.3;white-space:nowrap;box-shadow:0 6px 18px rgba(0,10,30,.3);opacity:0;transition:opacity .12s}
+.st-tip.show{opacity:1}
+.st-tip b{display:block;font-weight:650}
+.st-tip span{color:#a9bcd8;font-size:11.5px}
+.st-tip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:7px solid transparent;border-top-color:#0a2a55}
 </style>
 </head>
 <body>
@@ -1071,10 +1078,11 @@ const _icons = {};
 function stationIcon(shape, cls, trend, ring = "") {
   const key = [shape, cls ? cls.color : "none", trend || "", ring].join("|");
   if (_icons[key]) return _icons[key];
-  const fill = cls ? cls.color : ST_NODATA;
-  const light = cls && (cls.min === 60 || cls.min === 80);              // pale fills get a dark symbol
+  const hov = ring === "hover";                                          // pointer is over this station: navy
+  const fill = hov ? "#0a2a55" : cls ? cls.color : ST_NODATA;
+  const light = !hov && cls && (cls.min === 60 || cls.min === 80);      // pale fills get a dark symbol
   const ink = light ? "#1f2a1c" : "#ffffff";
-  const stroke = ring === "sel" ? "#111111" : ring === "fdra" ? "#111111" : "rgba(30,30,30,.55)", sw = ring ? 2.4 : 1.2;
+  const stroke = hov ? "#ffffff" : ring === "sel" ? "#111111" : ring === "fdra" ? "#111111" : "rgba(30,30,30,.55)", sw = hov ? 2.2 : ring ? 2.4 : 1.2;
   const body = shape === "circle" ? `<circle cx="12" cy="12" r="9.6" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`
     : `<rect x="4.6" y="4.6" width="14.8" height="14.8" rx="1.6" transform="rotate(45 12 12)" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
   const glyph = trend === "up" ? `<path d="M12 6.6 L16.2 11.6 H13.4 V17.2 H10.6 V11.6 H7.8 Z" fill="${ink}"/>`
@@ -1642,6 +1650,7 @@ function startMap() {
     let selSt = null;
 
     const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    let hoverSt = null;   // station under the pointer
     function drawStations() {
       stLayer.removeAll();
       const zoneSt = new Set((state.zone ? BY_ZONE[state.zone] : META.fdras).flatMap(f => f.sig_raws));
@@ -1649,17 +1658,18 @@ function startMap() {
       const gs = META.stations.map(s => {
         const inZone = zoneSt.has(s.id), inF = fdraSt.has(s.id), sel = s.id === selSt;
         const k = stationClass(s), m = s.map || {};
-        const ring = sel ? "sel" : inF ? "fdra" : "";
+        const hov = s.id === hoverSt, ring = hov ? "hover" : sel ? "sel" : inF ? "fdra" : "";
         return new Graphic({
           geometry: {type: "point", longitude: s.lon, latitude: s.lat},
           attributes: {id: s.id},
           symbol: {type: "picture-marker", url: stationIcon(s.fdras.length ? "circle" : "diamond", k, m.trend, ring),
-            width: sel ? 26 : 22, height: sel ? 26 : 22},
+            width: sel || hov ? 26 : 22, height: sel || hov ? 26 : 22},
           popupTemplate: null
         });
       });
       // draw selected-zone stations last so they sit on top
       gs.sort((a, b) => (zoneSt.has(a.attributes.id) - zoneSt.has(b.attributes.id)) || (fdraSt.has(a.attributes.id) - fdraSt.has(b.attributes.id)));
+      if (hoverSt) gs.sort((a, b) => (a.attributes.id === hoverSt) - (b.attributes.id === hoverSt));   // hovered station on top
       stLayer.addMany(gs);
     }
     async function loadFdraShapes() {
@@ -1741,10 +1751,26 @@ function startMap() {
       const zn = hit.results.find(r => r.graphic?.layer === zoneLayer && r.graphic.attributes?.zone);
       if (zn && BY_ZONE[zn.graphic.attributes.zone]) selectZone(zn.graphic.attributes.zone);       // clicked inside a zone, outside its FDRAs
     });
+    const tip = document.createElement("div"); tip.className = "st-tip"; tip.setAttribute("role", "tooltip");
+    view.container.appendChild(tip);
+    const hideTip = () => { tip.classList.remove("show"); if (hoverSt) { hoverSt = null; drawStations(); } };
     view.on("pointer-move", async evt => {
       const hit = await view.hitTest(evt, {include: [stLayer, fdraPolys]});
       view.container.style.cursor = hit.results.length ? "pointer" : "default";
+      const st = hit.results.find(r => r.graphic?.layer === stLayer);
+      const id = st ? st.graphic.attributes.id : null;
+      if (!id) return hideTip();
+      if (id !== hoverSt) {
+        hoverSt = id; drawStations();
+        const s = META.stations.find(x => x.id === id) || {};
+        tip.innerHTML = `<b>${esc(s.name || "Station")}</b><span>Station ${esc(id)}</span>`;
+      }
+      const sp = view.toScreen(st.graphic.geometry);   // anchor the tip just above the marker
+      tip.style.left = sp.x + "px"; tip.style.top = (sp.y - 18) + "px";
+      tip.classList.add("show");
     });
+    view.on("pointer-leave", hideTip);
+    view.watch("extent", () => tip.classList.contains("show") && hideTip());
 
     mapApi = {
       refresh() { drawStations(); drawFdraPolys(); drawZones(); },
