@@ -10,6 +10,8 @@
 /* =====================================================================
    SETTINGS — the only part you normally edit
    ===================================================================== */
+.source a{color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.source a:hover{text-decoration-thickness:2px}
 </style>
 <script>
 window.APP_CONFIG = {
@@ -210,7 +212,7 @@ table.bpt.mtx td{min-width:64px;border:2px solid var(--surface)}
 /* station drawer */
 .drawer{position:fixed;z-index:1000;right:16px;bottom:16px;width:min(470px,calc(100vw - 32px));max-height:min(80vh,640px);overflow:auto;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.18);display:none}
 .drawer.show{display:block}
-.drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface)}
+.drawer header{display:flex;align-items:flex-start;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;background:var(--surface)}
 .drawer h3{margin:0;font-size:16px}
 .drawer .dact{margin-left:auto;display:flex;gap:2px;align-items:center}
 .drawer .dact .x{margin-left:0;width:32px;height:32px;border-radius:6px;display:grid;place-items:center}
@@ -547,7 +549,12 @@ async function loadData() {
   META.stations.forEach(s => STATIONS[s.id] = s);
   const g = new Date(META.generated_utc);
   $("#lastFetched").textContent = "FEMS data last processed: " + g.toLocaleString("en-US", {hour: "numeric", minute: "2-digit", timeZoneName: "short", weekday: "long", month: "long", day: "numeric", year: "numeric"});
-  $("#sourceLine").innerHTML = `Fuel and weather data is sourced from <strong>FEMS</strong>. Percentiles are based on each FDRA's historical period. Observed through <strong>${esc(dayLabel(META.latest_obs_date))}</strong>; forecast issued ${esc(fmtMst(META.forecast_pull_mst))} MST.`;
+  const fullDate = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", year: "numeric"}) : "";
+  const issued = (() => { const d = new Date(String(META.forecast_pull_mst || "").replace(" ", "T"));
+    return isNaN(d) ? esc(META.forecast_pull_mst || "") : d.toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", year: "numeric"}) + ", " + d.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit"}); })();
+  $("#sourceLine").innerHTML = `Fuel and weather data is sourced from the <a href="https://fems.fs2c.usda.gov/ui" target="_blank" rel="noopener">Fire Environment Mapping System (FEMS)</a> application.
+    Percentile values are based on data from 2005 to 2024. Fire danger is based on breakpoints set locally by the US Forest Service.<br>
+    Observed through <strong>${esc(fullDate(META.latest_obs_date))}</strong>; forecast issued <strong>${issued} MST</strong>.`;
 }
 
 async function loadRatings() {
@@ -874,7 +881,7 @@ function stateBlocks() {
         <div class="state-badge"><small>Highest FDRA</small><span class="badge" style="background:${w ? w.color : "var(--surface-2)"}">${w ? esc(w.name) : "No data"}</span></div>
       </header>${outlookTable(fdras, {groupByZone: true, zones, footnote: false, detail: true})}</section>`;
   }).join("");
-  return out + `<div class="footnote">${methodNote(META.fdras)} Select a row for details.</div>`;
+  return out + `<div class="footnote">Select a row for details.</div>`;
 }
 function stationLinks(ids) {
   return ids.map(id => STATIONS[id] ? `<button class="st" data-station="${esc(id)}">${esc(titleCase(STATIONS[id].name))}</button>` : esc(id)).join(", ");
@@ -984,6 +991,7 @@ function renderLegend() {
   const NEUTRAL = {min: -1, color: "#5f6670"};   // neutral marker for the shape and trend keys
   let closed = window.innerWidth < 700;
   try { const v = localStorage.getItem("legendClosed"); if (v != null) closed = v === "1"; } catch (e) {}
+  if ($("#drawer").classList.contains("show")) closed = true;   // a popup is open: keep the map clear
   const el = $("#mapLegend");
   el.classList.toggle("closed", closed);
   const ramp = cols => `<div class="ramp">${cols.map(c => `<span style="background:${c}"></span>`).join("")}</div>`;
@@ -1290,7 +1298,11 @@ function setDrawerMin(v) {
   d.querySelector("header").setAttribute("aria-expanded", String(!v));
   try { localStorage.setItem("drawerMin", v ? "1" : "0"); } catch (e) {}
 }
-function showDrawer() { $("#drawer").classList.add("show"); setDrawerMin(drawerMin); if (!drawerMin) $("#drawer").scrollTop = 0; }
+function collapseLegend() {
+  const el = $("#mapLegend"); if (!el || el.classList.contains("closed")) return;
+  el.classList.add("closed"); el.querySelector(".lg-head")?.setAttribute("aria-expanded", "false");
+}
+function showDrawer() { collapseLegend(); $("#drawer").classList.add("show"); setDrawerMin(drawerMin); if (!drawerMin) $("#drawer").scrollTop = 0; }
 function openPanelForState() {
   if (state.fdra) openFdraPanel(state.fdra);
   else if (state.zone) openZonePanel(state.zone);
@@ -1320,7 +1332,7 @@ async function openStation(id) {
       <dt>Wind</dt><dd>${fmtNum(wx.ws)} mph ${compass(wx.wd)} (${fmtNum(wx.wd)}°) · gust ${fmtNum(wx.gs)}</dd><dt>Precip (hr)</dt><dd>${fmtNum(wx.p, 2)} in</dd><dt>VPD</dt><dd>${fmtNum(wx.vpd)}</dd></dl>` : ""}
     <div class="dtabs" role="tablist"><button role="tab" data-dtab="fd" aria-selected="${drawerTab === "fd"}">Fire Danger</button><button role="tab" data-dtab="wx" aria-selected="${drawerTab === "wx"}">Weather</button></div>
     <div id="dPane">Loading…</div>`;
-  $("#drawer").classList.add("show");
+  collapseLegend(); $("#drawer").classList.add("show");
   if (mapApi) mapApi.highlightStation(id);
   let detail;
   try { detail = await (await fetch(`data/stations/${encodeURIComponent(id)}.json`, {cache: "no-cache"})).json(); }
